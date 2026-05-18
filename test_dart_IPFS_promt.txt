@@ -1,0 +1,2 @@
+Build a flutter app with simple ui that can serve as a proof of concept for a full ipfs node.
+The goal is to have the app running on two mobile phones, and only with the cid to transfer a picture from on app to the other. It should feature a button to select a file, which will be uploaded and the cid shared to a messanger app. on the second app you have a textfield to input the cid and a button to download it and share it so that it can be saved. later the ipfs part should be able to be imported into another app.

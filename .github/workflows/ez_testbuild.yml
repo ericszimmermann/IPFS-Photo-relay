@@ -9,8 +9,15 @@ on:
 jobs:
   android:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
     steps:
       - uses: actions/checkout@v4
+      - name: Show workspace
+        run: |
+          pwd
+          ls -la
       - uses: actions/setup-java@v4
         with:
           distribution: "temurin"
@@ -25,13 +32,14 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('android/gradle/wrapper/gradle-wrapper.properties', 'android/build.gradle', 'android/settings.gradle', 'android/app/build.gradle', 'pubspec.lock') }}
+          key: ${{ runner.os }}-gradle-${{ hashFiles('android/gradle/wrapper/gradle-wrapper.properties', 'android/build.gradle.kts', 'android/settings.gradle.kts', 'android/app/build.gradle.kts', 'pubspec.lock') }}
           restore-keys: |
             ${{ runner.os }}-gradle-
       - run: flutter pub get
-      - run: flutter build apk --release --no-pub
+      - run: flutter analyze
+      - run: flutter build apk --debug --no-pub
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
           name: app-debug
-          path: build/app/outputs/flutter-apk/app-release.apk
+          path: build/app/outputs/flutter-apk/app-debug.apk

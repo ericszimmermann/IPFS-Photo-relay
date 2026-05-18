@@ -91,17 +91,16 @@ class IpfsTransferService {
     final fileName = _sanitizeFileName(
       file.name.isEmpty ? 'shared-image' : file.name,
     );
-    final cid = await _node!.addDirectory({fileName: bytes});
+    final cid = _normalizeImmutableCid(
+      await _node!.addDirectory({fileName: bytes}),
+    );
     await _node!.pin(cid);
 
     return PublishedImage(cid: cid, fileName: fileName, bytes: bytes);
   }
 
   Future<DownloadedImage> downloadByCid(String rawCid) async {
-    final cid = rawCid.trim();
-    if (cid.isEmpty) {
-      throw ArgumentError('Enter a CID first.');
-    }
+    final cid = _normalizeImmutableCid(rawCid);
 
     await ensureStarted();
 
@@ -249,6 +248,33 @@ class IpfsTransferService {
   String _sanitizeFileName(String name) {
     final cleaned = name.replaceAll(RegExp(r'[<>:"/\\|?*]'), '_').trim();
     return cleaned.isEmpty ? 'shared-image' : cleaned;
+  }
+
+  String _normalizeImmutableCid(String rawCid) {
+    final cid = rawCid.trim();
+    if (cid.isEmpty) {
+      throw ArgumentError('Enter a CID first.');
+    }
+
+    try {
+      final parsed = CID.decode(cid);
+      if (!parsed.validate()) {
+        throw const FormatException('CID validation failed.');
+      }
+
+      final canonicalCid = parsed.encode();
+      if (parsed.version == 1 && !canonicalCid.startsWith('baf')) {
+        throw const FormatException(
+          'Expected an immutable CIDv1, usually starting with "baf...".',
+        );
+      }
+
+      return canonicalCid;
+    } catch (_) {
+      throw ArgumentError(
+        'Invalid CID. It looks truncated or malformed. Paste the full immutable CID, usually starting with "bafy..." or "Qm...".',
+      );
+    }
   }
 
   bool _hasExtension(String fileName) {

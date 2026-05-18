@@ -1,0 +1,11 @@
+name: multibase
+description: Local override with correct RFC4648 base32 support for CID encoding.
+version: 1.0.0
+publish_to: none
+
+environment:
+  sdk: ^3.11.5
+
+dependencies:
+  base32: ^2.2.0
+  base_x: ^2.0.1

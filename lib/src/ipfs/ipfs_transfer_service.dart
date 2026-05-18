@@ -95,6 +95,7 @@ class IpfsTransferService {
       await _node!.addDirectory({fileName: bytes}),
     );
     await _node!.pin(cid);
+    await _announceProvider(cid);
 
     return PublishedImage(cid: cid, fileName: fileName, bytes: bytes);
   }
@@ -243,6 +244,15 @@ class IpfsTransferService {
     await file.parent.create(recursive: true);
     await file.writeAsBytes(bytes, flush: true);
     return file.path;
+  }
+
+  Future<void> _announceProvider(String cid) async {
+    final dhtHandler = _node?.dhtHandler;
+    if (dhtHandler == null) {
+      return;
+    }
+
+    await dhtHandler.provide(CID.decode(cid));
   }
 
   String _sanitizeFileName(String name) {

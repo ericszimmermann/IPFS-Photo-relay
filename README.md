@@ -1,20 +1,28 @@
 # IPFS Photo Relay
 
-Simple Flutter proof of concept for transferring a picture between two phones with an embedded IPFS node, plus optional remote IPFS upload targets for more reliable cross-network retrieval.
+Simple Flutter proof of concept for sending a picture between two phones by sharing only a CID, while using remote IPFS infrastructure instead of an embedded on-device node.
+
+## What Changed On This Branch
+
+- The local `dart_ipfs` node dependency was removed.
+- The app is now remote-only.
+- Uploads go directly to Pinata, Filebase RPC, or a self-hosted Kubo API.
+- Downloads happen through a configurable gateway instead of Bitswap or local peer discovery.
+
+This branch is the better fit if your real delivery path is still remote anyway and you do not want the native complexity of an embedded IPFS node in the mobile app.
 
 ## What It Does
 
-- Phone A picks an image, adds it to the embedded phone node, and shares the CID.
-- The app can also share a peer bundle that includes the peer ID and usable multiaddrs so Phone B can try a direct P2P connection first.
-- The same file can optionally be mirrored to Pinata, Filebase RPC, or a self-hosted Kubo API, which is the more realistic path when the two phones are on different networks.
-- Phone B can import the peer bundle, paste the CID, fetch the content, and share the downloaded file so it can be saved with the platform share sheet.
-- The IPFS logic lives in a reusable service layer so it can be imported into another Flutter app later.
+- Phone A selects an image and uploads it to a remote IPFS backend.
+- The backend returns a CID, which can be shared through a short-message channel.
+- Phone B pastes the CID, uses a configured gateway to fetch the file, and shares the downloaded file into Photos or Files.
+- The transfer logic still lives in a reusable service layer so it can be imported into another Flutter app later.
 
 ## Project Shape
 
-- `lib/src/ipfs/ipfs_transfer_service.dart`: embedded node startup, publish, fetch, pin, provider announcement, peer bundle import/export, and share helpers.
-- `lib/src/ipfs/remote_upload_client.dart`: Pinata, Filebase RPC, and Kubo-compatible multipart upload client.
-- `lib/src/ipfs_photo_relay_page.dart`: proof-of-concept UI for the two-phone flow.
+- `lib/src/ipfs/ipfs_transfer_service.dart`: file picking, remote upload, remote download, CID validation, and share helpers.
+- `lib/src/ipfs/remote_upload_client.dart`: HTTP client for Pinata, Filebase RPC, Kubo-compatible upload APIs, and gateway downloads.
+- `lib/src/ipfs_photo_relay_page.dart`: remote-only proof-of-concept UI.
 - `lib/src/app.dart`: app theme and top-level wiring.
 
 ## Running It
@@ -24,42 +32,39 @@ flutter pub get
 flutter run
 ```
 
-Install it on two phones, keep both apps open, then:
+Install it on two phones, then:
 
-1. On Phone A, choose an upload path.
-2. Tap `Select Image`.
-3. Share the CID through your messenger app.
-4. If you want to try direct peer dialing too, share the peer bundle separately.
-5. On Phone B, optionally import the peer bundle first, then paste the CID and tap `Download From CID`.
-6. Use `Share Downloaded File` to save the image via the platform share sheet.
+1. Choose a remote backend.
+2. Confirm the upload endpoint and gateway base.
+3. Enter the backend token if needed.
+4. On Phone A, tap `Select Image`.
+5. Share the returned CID through your messenger app.
+6. On Phone B, paste the CID and tap `Download From CID`.
+7. Use `Share Downloaded File` to save the file through the platform share sheet.
 
-## Upload Paths
-
-### Local Only
-
-The file is added only to the embedded node on the publishing phone. This is useful for direct P2P experiments, but cross-network retrieval depends on mobile reachability, provider advertisement, and the limits of the current Dart IPFS stack.
+## Supported Remote Paths
 
 ### Pinata
 
-- Default endpoint: `https://api.pinata.cloud/pinning/pinFileToIPFS`
-- Auth field: Pinata JWT bearer token
-- Intended use: easier CID-only sharing when the phones are not on the same network
+- Upload endpoint default: `https://api.pinata.cloud/pinning/pinFileToIPFS`
+- Gateway default: `https://gateway.pinata.cloud/ipfs/`
+- Auth: Pinata JWT bearer token
 
 ### Filebase RPC
 
-- Default endpoint: `https://rpc.filebase.io/api/v0/add`
-- Auth field: Filebase API key sent as `Authorization: Bearer <api-key>`
-- Implemented against Filebase's Kubo-compatible RPC API
+- Upload endpoint default: `https://rpc.filebase.io/api/v0/add`
+- Gateway default: `https://ipfs.filebase.io/ipfs/`
+- Auth: Filebase API token sent as `Authorization: Bearer <token>`
 
 ### Self-Hosted Kubo
 
-- Default endpoint: `http://127.0.0.1:5001/api/v0/add`
-- Auth field: optional bearer token
-- Intended use: your own reachable Kubo node, including one exposed over VPN or reverse proxy
+- Upload endpoint default: `http://127.0.0.1:5001/api/v0/add`
+- Gateway default: `http://127.0.0.1:8080/ipfs/`
+- Auth: optional bearer token
+- Good fit for a Kubo node behind VPN, reverse proxy, or another controlled network path
 
 ## Notes
 
-- The app now publishes raw file bytes locally so the shareable CID is closer to what remote RPC add endpoints return for the same file.
-- Peer bundles filter out obviously unusable listen addresses such as `0.0.0.0` and `127.0.0.1`, but direct P2P across mobile networks can still fail if neither phone is dialable.
-- `flutter analyze` passes.
-- `flutter test` is currently blocked on this Windows machine because the `sodium` dependency used by `dart_ipfs` tries to build a native asset and expects Visual Studio build tooling (`vswhere`) to be installed.
+- The Kubo endpoint is editable in the UI, and the gateway base is editable too.
+- CID validation is now lightweight and app-local because this branch no longer depends on the Dart IPFS stack.
+- `flutter analyze` should pass on this branch.

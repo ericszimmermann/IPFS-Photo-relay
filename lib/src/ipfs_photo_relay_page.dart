@@ -24,87 +24,46 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
   late final IpfsTransferService _service =
       widget.service ?? IpfsTransferService();
   final TextEditingController _cidController = TextEditingController();
-  final TextEditingController _peerBundleController = TextEditingController();
   final TextEditingController _endpointController = TextEditingController();
+  final TextEditingController _gatewayController = TextEditingController();
   final TextEditingController _authTokenController = TextEditingController();
 
-  IpfsNodeSnapshot? _snapshot;
+  final Map<RemoteUploadTarget, String> _endpointOverrides = {};
+  final Map<RemoteUploadTarget, String> _gatewayOverrides = {};
+  final Map<RemoteUploadTarget, String> _authTokenOverrides = {};
+
   PublishedImage? _publishedImage;
   DownloadedImage? _downloadedImage;
-  PeerImportResult? _connectedPeer;
+  RemoteUploadTarget _uploadTarget = RemoteUploadTarget.pinata;
 
-  RemoteUploadTarget _uploadTarget = RemoteUploadTarget.localOnly;
-
-  bool _isStarting = false;
   bool _isPublishing = false;
   bool _isDownloading = false;
-  bool _isConnectingPeer = false;
 
-  String _statusMessage = 'Starting embedded IPFS node...';
+  String _statusMessage =
+      'Remote mode active. Upload to Pinata, Filebase RPC, or a Kubo node.';
   String? _errorMessage;
 
   @override
   void initState() {
     super.initState();
-    _applyUploadTargetDefaults(_uploadTarget);
-    if (widget.startNodeOnLoad) {
-      _initializeNode();
-    } else {
-      _statusMessage = 'Node startup paused for test mode.';
-    }
+    _loadTargetFields(_uploadTarget);
   }
 
   @override
   void dispose() {
     _cidController.dispose();
-    _peerBundleController.dispose();
     _endpointController.dispose();
+    _gatewayController.dispose();
     _authTokenController.dispose();
     unawaited(_service.dispose());
     super.dispose();
-  }
-
-  Future<void> _initializeNode() async {
-    setState(() {
-      _isStarting = true;
-      _errorMessage = null;
-      _statusMessage = 'Starting embedded IPFS node...';
-    });
-
-    try {
-      final snapshot = await _service.ensureStarted();
-      if (!mounted) {
-        return;
-      }
-
-      setState(() {
-        _snapshot = snapshot;
-        _statusMessage =
-            'Node online. Share a CID, a peer bundle, or mirror content to a remote IPFS backend.';
-      });
-    } catch (error) {
-      if (!mounted) {
-        return;
-      }
-
-      setState(() {
-        _errorMessage = error.toString();
-        _statusMessage = 'Node startup failed.';
-      });
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isStarting = false;
-        });
-      }
-    }
   }
 
   Future<void> _publishImage() async {
     setState(() {
       _isPublishing = true;
       _errorMessage = null;
-      _statusMessage = 'Picking an image and publishing it to IPFS...';
+      _statusMessage = 'Picking an image and uploading it to remote IPFS...';
     });
 
     try {
@@ -122,16 +81,11 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
         return;
       }
 
-      final snapshot = await _service.ensureStarted();
-      if (!mounted) {
-        return;
-      }
-
       setState(() {
-        _snapshot = snapshot;
         _publishedImage = publishedImage;
         _cidController.text = publishedImage.cid;
-        _statusMessage = 'Published ${publishedImage.fileName} to IPFS.';
+        _statusMessage =
+            'Uploaded ${publishedImage.fileName} to ${publishedImage.remoteTarget.label}.';
       });
     } catch (error) {
       if (!mounted) {
@@ -140,7 +94,7 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
 
       setState(() {
         _errorMessage = error.toString();
-        _statusMessage = 'Publishing failed.';
+        _statusMessage = 'Upload failed.';
       });
     } finally {
       if (mounted) {
@@ -155,24 +109,22 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
     setState(() {
       _isDownloading = true;
       _errorMessage = null;
-      _statusMessage = 'Resolving the CID and downloading content...';
+      _statusMessage = 'Fetching the CID through the configured gateway...';
     });
 
     try {
-      final downloadedImage = await _service.downloadByCid(_cidController.text);
-      if (!mounted) {
-        return;
-      }
-
-      final snapshot = await _service.ensureStarted();
+      final downloadedImage = await _service.downloadByCid(
+        rawCid: _cidController.text,
+        remoteUploadConfig: _currentRemoteUploadConfig(),
+      );
       if (!mounted) {
         return;
       }
 
       setState(() {
-        _snapshot = snapshot;
         _downloadedImage = downloadedImage;
-        _statusMessage = 'Downloaded ${downloadedImage.fileName} from IPFS.';
+        _statusMessage =
+            'Downloaded ${downloadedImage.fileName} from ${downloadedImage.gatewayUrl}.';
       });
     } catch (error) {
       if (!mounted) {
@@ -192,56 +144,6 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
     }
   }
 
-  Future<void> _connectPeerBundle() async {
-    final bundle = _peerBundleController.text.trim();
-    if (bundle.isEmpty) {
-      _showSnack('Paste a shared peer bundle first.');
-      return;
-    }
-
-    setState(() {
-      _isConnectingPeer = true;
-      _errorMessage = null;
-      _statusMessage = 'Importing peer bundle and opening a P2P connection...';
-    });
-
-    try {
-      final connectedPeer = await _service.connectToSharedPeer(bundle);
-      if (!mounted) {
-        return;
-      }
-
-      final snapshot = await _service.ensureStarted();
-      if (!mounted) {
-        return;
-      }
-
-      setState(() {
-        _snapshot = snapshot;
-        _connectedPeer = connectedPeer;
-        if (connectedPeer.cid != null) {
-          _cidController.text = connectedPeer.cid!;
-        }
-        _statusMessage = 'Connected to peer ${connectedPeer.peerId}.';
-      });
-    } catch (error) {
-      if (!mounted) {
-        return;
-      }
-
-      setState(() {
-        _errorMessage = error.toString();
-        _statusMessage = 'Peer import failed.';
-      });
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isConnectingPeer = false;
-        });
-      }
-    }
-  }
-
   Future<void> _shareCid() async {
     final cid = _publishedImage?.cid;
     if (cid == null) {
@@ -254,26 +156,6 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
         return;
       }
       _showSnack('CID shared.');
-    } catch (error) {
-      if (!mounted) {
-        return;
-      }
-      _showSnack('Sharing failed: $error');
-    }
-  }
-
-  Future<void> _sharePeerBundle() async {
-    final bundle = _publishedImage?.peerBundle;
-    if (bundle == null) {
-      return;
-    }
-
-    try {
-      await _service.sharePeerBundle(bundle);
-      if (!mounted) {
-        return;
-      }
-      _showSnack('Peer bundle shared.');
     } catch (error) {
       if (!mounted) {
         return;
@@ -334,31 +216,39 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
     return RemoteUploadConfig(
       target: _uploadTarget,
       endpoint: _endpointController.text,
+      gatewayBase: _gatewayController.text,
       authToken: _authTokenController.text,
     );
   }
 
-  void _applyUploadTargetDefaults(RemoteUploadTarget target) {
-    switch (target) {
-      case RemoteUploadTarget.localOnly:
-        _endpointController.text = '';
-      case RemoteUploadTarget.pinata:
-        _endpointController.text = 'https://api.pinata.cloud/pinning/pinFileToIPFS';
-      case RemoteUploadTarget.filebase:
-        _endpointController.text = 'https://rpc.filebase.io/api/v0/add';
-      case RemoteUploadTarget.kubo:
-        _endpointController.text = 'http://127.0.0.1:5001/api/v0/add';
-    }
+  void _persistCurrentTargetFields() {
+    _endpointOverrides[_uploadTarget] = _endpointController.text;
+    _gatewayOverrides[_uploadTarget] = _gatewayController.text;
+    _authTokenOverrides[_uploadTarget] = _authTokenController.text;
+  }
+
+  void _loadTargetFields(RemoteUploadTarget target) {
+    _endpointController.text =
+        _endpointOverrides[target] ?? target.defaultUploadEndpoint;
+    _gatewayController.text =
+        _gatewayOverrides[target] ?? target.defaultGatewayBase;
+    _authTokenController.text = _authTokenOverrides[target] ?? '';
+  }
+
+  void _onUploadTargetChanged(RemoteUploadTarget target) {
+    _persistCurrentTargetFields();
+    setState(() {
+      _uploadTarget = target;
+      _loadTargetFields(target);
+    });
   }
 
   String get _authTokenLabel {
     switch (_uploadTarget) {
-      case RemoteUploadTarget.localOnly:
-        return 'Auth token';
       case RemoteUploadTarget.pinata:
         return 'Pinata JWT';
       case RemoteUploadTarget.filebase:
-        return 'Filebase API key';
+        return 'Filebase API token';
       case RemoteUploadTarget.kubo:
         return 'Bearer token (optional)';
     }
@@ -366,14 +256,12 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
 
   String get _uploadDescription {
     switch (_uploadTarget) {
-      case RemoteUploadTarget.localOnly:
-        return 'Only publish to the embedded phone node.';
       case RemoteUploadTarget.pinata:
-        return 'Upload the file directly to Pinata using the `pinFileToIPFS` endpoint.';
+        return 'Upload the file directly to Pinata and fetch it again through a Pinata gateway.';
       case RemoteUploadTarget.filebase:
-        return 'Upload the file through Filebase\'s official Kubo-compatible RPC API.';
+        return 'Upload through Filebase\'s Kubo-compatible RPC API and retrieve through the Filebase IPFS gateway.';
       case RemoteUploadTarget.kubo:
-        return 'Upload the file to a self-hosted Kubo RPC endpoint, for example over VPN.';
+        return 'Upload to your own Kubo API and fetch from your chosen gateway, including a VPN-exposed node.';
     }
   }
 
@@ -386,13 +274,6 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('IPFS Photo Relay'),
-        actions: [
-          IconButton(
-            tooltip: 'Refresh node',
-            onPressed: _isStarting ? null : _initializeNode,
-            icon: const Icon(Icons.refresh_rounded),
-          ),
-        ],
       ),
       body: DecoratedBox(
         decoration: const BoxDecoration(
@@ -413,8 +294,6 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       _StatusCard(
-                        snapshot: _snapshot,
-                        isStarting: _isStarting,
                         statusMessage: _statusMessage,
                         errorMessage: _errorMessage,
                       ),
@@ -422,10 +301,10 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
                       _TipsCard(theme: theme),
                       const SizedBox(height: 16),
                       _SectionCard(
-                        eyebrow: 'Delivery Path',
-                        title: 'Choose where the file should live',
+                        eyebrow: 'Remote Backend',
+                        title: 'Choose where the file will live',
                         description:
-                            'Use the phone node only for direct P2P experiments, or mirror the same file to Pinata, Filebase, or a Kubo API so the CID has a stronger chance of being retrievable across networks.',
+                            'This branch is remote-only. The app uploads straight to Pinata, Filebase RPC, or your own Kubo API and later fetches the CID back through a gateway.',
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
@@ -446,57 +325,62 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
                                   )
                                   .toList(),
                               onChanged: (target) {
-                                if (target == null) {
-                                  return;
+                                if (target != null) {
+                                  _onUploadTargetChanged(target);
                                 }
-                                setState(() {
-                                  _uploadTarget = target;
-                                  _applyUploadTargetDefaults(target);
-                                });
                               },
                             ),
                             const SizedBox(height: 12),
-                            Text(_uploadDescription, style: theme.textTheme.bodyMedium),
-                            if (_uploadTarget != RemoteUploadTarget.localOnly) ...[
-                              const SizedBox(height: 12),
-                              TextField(
-                                controller: _endpointController,
-                                decoration: InputDecoration(
-                                  labelText: 'Endpoint',
-                                  border: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(18),
-                                  ),
+                            Text(
+                              _uploadDescription,
+                              style: theme.textTheme.bodyMedium,
+                            ),
+                            const SizedBox(height: 12),
+                            TextField(
+                              controller: _endpointController,
+                              decoration: InputDecoration(
+                                labelText: 'Upload endpoint',
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(18),
                                 ),
                               ),
-                              const SizedBox(height: 12),
-                              TextField(
-                                controller: _authTokenController,
-                                obscureText: true,
-                                decoration: InputDecoration(
-                                  labelText: _authTokenLabel,
-                                  border: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(18),
-                                  ),
+                            ),
+                            const SizedBox(height: 12),
+                            TextField(
+                              controller: _gatewayController,
+                              decoration: InputDecoration(
+                                labelText: 'Gateway base',
+                                hintText: 'https://gateway.example.com/ipfs/',
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(18),
                                 ),
                               ),
-                            ],
+                            ),
+                            const SizedBox(height: 12),
+                            TextField(
+                              controller: _authTokenController,
+                              obscureText: true,
+                              decoration: InputDecoration(
+                                labelText: _authTokenLabel,
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(18),
+                                ),
+                              ),
+                            ),
                           ],
                         ),
                       ),
                       const SizedBox(height: 16),
                       _SectionCard(
                         eyebrow: 'Phone A',
-                        title: 'Publish the image and share the route',
+                        title: 'Upload the image and share the CID',
                         description:
-                            'Publishing creates a local IPFS CID, optionally mirrors the file to a remote backend, and prepares a peer bundle with multiaddrs that you can share separately if you want to try direct P2P.',
+                            'Publishing uploads the file to the configured remote backend and returns the shareable CID. This is the path to use when you do not want the app to run a local IPFS node.',
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
                             FilledButton.icon(
-                              onPressed:
-                                  _isStarting || _isPublishing
-                                      ? null
-                                      : _publishImage,
+                              onPressed: _isPublishing ? null : _publishImage,
                               icon: _isPublishing
                                   ? const SizedBox(
                                       width: 18,
@@ -516,16 +400,19 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
                               ),
                               const SizedBox(height: 8),
                               _MetaRow(
-                                label: 'Local CID',
-                                value: publishedImage.localCid,
+                                label: 'Upload target',
+                                value: publishedImage.remoteTarget.label,
                               ),
-                              if (publishedImage.remoteCid != null) ...[
-                                const SizedBox(height: 8),
-                                _MetaRow(
-                                  label: 'Remote CID (${publishedImage.remoteTarget?.label})',
-                                  value: publishedImage.remoteCid!,
-                                ),
-                              ],
+                              const SizedBox(height: 8),
+                              _MetaRow(
+                                label: 'Upload endpoint',
+                                value: publishedImage.uploadEndpoint,
+                              ),
+                              const SizedBox(height: 8),
+                              _MetaRow(
+                                label: 'Gateway URL',
+                                value: publishedImage.gatewayUrl,
+                              ),
                               if (publishedImage.remoteUploadMessage != null) ...[
                                 const SizedBox(height: 8),
                                 Text(
@@ -533,11 +420,6 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
                                   style: theme.textTheme.bodyMedium,
                                 ),
                               ],
-                              const SizedBox(height: 8),
-                              _MetaRow(
-                                label: 'Peer bundle',
-                                value: publishedImage.peerBundle,
-                              ),
                               const SizedBox(height: 12),
                               Wrap(
                                 spacing: 12,
@@ -555,19 +437,6 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
                                     onPressed: _shareCid,
                                     icon: const Icon(Icons.share_outlined),
                                     label: const Text('Share CID'),
-                                  ),
-                                  OutlinedButton.icon(
-                                    onPressed: () => _copyText(
-                                      publishedImage.peerBundle,
-                                      'Peer bundle',
-                                    ),
-                                    icon: const Icon(Icons.copy_all_rounded),
-                                    label: const Text('Copy Peer Bundle'),
-                                  ),
-                                  FilledButton.tonalIcon(
-                                    onPressed: _sharePeerBundle,
-                                    icon: const Icon(Icons.route_outlined),
-                                    label: const Text('Share Peer Bundle'),
                                   ),
                                 ],
                               ),
@@ -589,61 +458,12 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
                       const SizedBox(height: 16),
                       _SectionCard(
                         eyebrow: 'Phone B',
-                        title: 'Import a peer bundle and fetch by CID',
+                        title: 'Fetch the image through a gateway',
                         description:
-                            'Paste a shared multiaddr bundle to try a direct P2P connection, or just paste the CID if the content was mirrored to a remote IPFS backend.',
+                            'Paste the CID, point the app at a gateway that can serve it, and the downloaded file can be shared into Photos or Files.',
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            TextField(
-                              controller: _peerBundleController,
-                              minLines: 3,
-                              maxLines: 7,
-                              decoration: InputDecoration(
-                                labelText: 'Peer bundle or multiaddr',
-                                hintText: 'PEER_ID=...\nCID=...\nMULTIADDR=/ip4/.../tcp/.../p2p/...',
-                                suffixIcon: IconButton(
-                                  tooltip: 'Paste peer bundle',
-                                  onPressed: () => _pasteIntoController(
-                                    _peerBundleController,
-                                  ),
-                                  icon: const Icon(Icons.content_paste_rounded),
-                                ),
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(18),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(height: 12),
-                            FilledButton.icon(
-                              onPressed:
-                                  _isStarting || _isConnectingPeer
-                                      ? null
-                                      : _connectPeerBundle,
-                              icon: _isConnectingPeer
-                                  ? const SizedBox(
-                                      width: 18,
-                                      height: 18,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                      ),
-                                    )
-                                  : const Icon(Icons.link_rounded),
-                              label: const Text('Import And Connect'),
-                            ),
-                            if (_connectedPeer != null) ...[
-                              const SizedBox(height: 12),
-                              _MetaRow(
-                                label: 'Connected peer',
-                                value: _connectedPeer!.peerId,
-                              ),
-                              const SizedBox(height: 8),
-                              _MetaRow(
-                                label: 'Using multiaddr',
-                                value: _connectedPeer!.multiaddr,
-                              ),
-                            ],
-                            const SizedBox(height: 16),
                             TextField(
                               controller: _cidController,
                               minLines: 1,
@@ -665,10 +485,7 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
                             ),
                             const SizedBox(height: 12),
                             FilledButton.icon(
-                              onPressed:
-                                  _isStarting || _isDownloading
-                                      ? null
-                                      : _downloadImage,
+                              onPressed: _isDownloading ? null : _downloadImage,
                               icon: _isDownloading
                                   ? const SizedBox(
                                       width: 18,
@@ -690,6 +507,11 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
                               _MetaRow(
                                 label: 'Type',
                                 value: downloadedImage.mimeType,
+                              ),
+                              const SizedBox(height: 8),
+                              _MetaRow(
+                                label: 'Fetched from',
+                                value: downloadedImage.gatewayUrl,
                               ),
                               const SizedBox(height: 12),
                               FilledButton.tonalIcon(
@@ -728,14 +550,10 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
 
 class _StatusCard extends StatelessWidget {
   const _StatusCard({
-    required this.snapshot,
-    required this.isStarting,
     required this.statusMessage,
     required this.errorMessage,
   });
 
-  final IpfsNodeSnapshot? snapshot;
-  final bool isStarting;
   final String statusMessage;
   final String? errorMessage;
 
@@ -758,7 +576,7 @@ class _StatusCard extends StatelessWidget {
                     color: Color(0xFF153243),
                     shape: BoxShape.circle,
                   ),
-                  child: const Icon(Icons.hub_outlined, color: Colors.white),
+                  child: const Icon(Icons.cloud_upload_outlined, color: Colors.white),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
@@ -766,7 +584,7 @@ class _StatusCard extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'Embedded Full Node',
+                        'Remote IPFS Mode',
                         style: theme.textTheme.titleLarge?.copyWith(
                           fontWeight: FontWeight.w700,
                         ),
@@ -778,12 +596,6 @@ class _StatusCard extends StatelessWidget {
                     ],
                   ),
                 ),
-                if (isStarting)
-                  const SizedBox(
-                    width: 24,
-                    height: 24,
-                    child: CircularProgressIndicator(strokeWidth: 2.2),
-                  ),
               ],
             ),
             if (errorMessage != null) ...[
@@ -793,29 +605,6 @@ class _StatusCard extends StatelessWidget {
                 style: theme.textTheme.bodyMedium?.copyWith(
                   color: theme.colorScheme.error,
                 ),
-              ),
-            ],
-            if (snapshot != null) ...[
-              const SizedBox(height: 16),
-              Wrap(
-                spacing: 12,
-                runSpacing: 12,
-                children: [
-                  _InfoChip(
-                    label: 'Peer ID',
-                    value: snapshot!.peerId,
-                  ),
-                  _InfoChip(
-                    label: 'Connected peers',
-                    value: '${snapshot!.connectedPeers}',
-                  ),
-                  _InfoChip(
-                    label: 'Listen addresses',
-                    value: snapshot!.addresses.isEmpty
-                        ? 'None reported yet'
-                        : '${snapshot!.addresses.length}',
-                  ),
-                ],
               ),
             ],
           ],
@@ -845,11 +634,11 @@ class _TipsCard extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 12),
-            const Text('1. Publish the image locally, and mirror it to Pinata, Filebase RPC, or your Kubo API if you want CID-only retrieval across networks.'),
+            const Text('1. Pick one remote backend and configure both its upload endpoint and a gateway that can serve the resulting CID.'),
             const SizedBox(height: 6),
-            const Text('2. Share the CID through your short-message channel, and share the peer bundle separately if you also want to test direct P2P dialing.'),
+            const Text('2. Upload the image on Phone A and share only the CID through your short-message channel.'),
             const SizedBox(height: 6),
-            const Text('3. On the receiving phone, import the peer bundle first when trying P2P, then fetch by CID.'),
+            const Text('3. On Phone B, use the same backend or another reachable gateway to fetch the CID and share the downloaded file into the device gallery or files app.'),
           ],
         ),
       ),
@@ -931,40 +720,6 @@ class _MetaRow extends StatelessWidget {
           style: theme.textTheme.bodyLarge,
         ),
       ],
-    );
-  }
-}
-
-class _InfoChip extends StatelessWidget {
-  const _InfoChip({required this.label, required this.value});
-
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
-    return Container(
-      constraints: const BoxConstraints(minWidth: 140),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.primary.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(18),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            label,
-            style: theme.textTheme.labelMedium?.copyWith(
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(value, maxLines: 4, overflow: TextOverflow.ellipsis),
-        ],
-      ),
     );
   }
 }

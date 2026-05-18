@@ -4,7 +4,6 @@ import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 
 enum RemoteUploadTarget {
-  localOnly,
   pinata,
   filebase,
   kubo,
@@ -13,8 +12,6 @@ enum RemoteUploadTarget {
 extension RemoteUploadTargetLabel on RemoteUploadTarget {
   String get label {
     switch (this) {
-      case RemoteUploadTarget.localOnly:
-        return 'Local Only';
       case RemoteUploadTarget.pinata:
         return 'Pinata';
       case RemoteUploadTarget.filebase:
@@ -23,38 +20,51 @@ extension RemoteUploadTargetLabel on RemoteUploadTarget {
         return 'Kubo RPC';
     }
   }
+
+  String get defaultUploadEndpoint {
+    switch (this) {
+      case RemoteUploadTarget.pinata:
+        return 'https://api.pinata.cloud/pinning/pinFileToIPFS';
+      case RemoteUploadTarget.filebase:
+        return 'https://rpc.filebase.io/api/v0/add';
+      case RemoteUploadTarget.kubo:
+        return 'http://127.0.0.1:5001/api/v0/add';
+    }
+  }
+
+  String get defaultGatewayBase {
+    switch (this) {
+      case RemoteUploadTarget.pinata:
+        return 'https://gateway.pinata.cloud/ipfs/';
+      case RemoteUploadTarget.filebase:
+        return 'https://ipfs.filebase.io/ipfs/';
+      case RemoteUploadTarget.kubo:
+        return 'http://127.0.0.1:8080/ipfs/';
+    }
+  }
 }
 
 class RemoteUploadConfig {
   const RemoteUploadConfig({
     required this.target,
     this.endpoint = '',
+    this.gatewayBase = '',
     this.authToken = '',
   });
 
   final RemoteUploadTarget target;
   final String endpoint;
+  final String gatewayBase;
   final String authToken;
 
-  bool get isEnabled => target != RemoteUploadTarget.localOnly;
-
   String get resolvedEndpoint {
-    switch (target) {
-      case RemoteUploadTarget.localOnly:
-        return '';
-      case RemoteUploadTarget.pinata:
-        return endpoint.trim().isEmpty
-            ? 'https://api.pinata.cloud/pinning/pinFileToIPFS'
-            : endpoint.trim();
-      case RemoteUploadTarget.filebase:
-        return endpoint.trim().isEmpty
-            ? 'https://rpc.filebase.io/api/v0/add'
-            : endpoint.trim();
-      case RemoteUploadTarget.kubo:
-        return endpoint.trim().isEmpty
-            ? 'http://127.0.0.1:5001/api/v0/add'
-            : endpoint.trim();
-    }
+    final trimmed = endpoint.trim();
+    return trimmed.isEmpty ? target.defaultUploadEndpoint : trimmed;
+  }
+
+  String get resolvedGatewayBase {
+    final trimmed = gatewayBase.trim();
+    return trimmed.isEmpty ? target.defaultGatewayBase : trimmed;
   }
 }
 
@@ -63,11 +73,27 @@ class RemoteUploadResult {
     required this.cid,
     required this.target,
     required this.endpoint,
+    required this.gatewayUrl,
   });
 
   final String cid;
   final RemoteUploadTarget target;
   final String endpoint;
+  final String gatewayUrl;
+}
+
+class RemoteDownloadResult {
+  const RemoteDownloadResult({
+    required this.bytes,
+    required this.fileName,
+    required this.mimeType,
+    required this.gatewayUrl,
+  });
+
+  final Uint8List bytes;
+  final String fileName;
+  final String mimeType;
+  final String gatewayUrl;
 }
 
 class RemoteUploadClient {
@@ -77,13 +103,7 @@ class RemoteUploadClient {
     required String fileName,
     required String mimeType,
   }) async {
-    if (!config.isEnabled) {
-      return null;
-    }
-
     switch (config.target) {
-      case RemoteUploadTarget.localOnly:
-        return null;
       case RemoteUploadTarget.pinata:
         return _uploadToPinata(
           config: config,
@@ -100,6 +120,39 @@ class RemoteUploadClient {
           mimeType: mimeType,
         );
     }
+  }
+
+  Future<RemoteDownloadResult> downloadFile({
+    required RemoteUploadConfig config,
+    required String cid,
+  }) async {
+    final gatewayUrl = _buildGatewayUrl(config.resolvedGatewayBase, cid);
+    final request = http.Request('GET', Uri.parse(gatewayUrl));
+
+    final token = config.authToken.trim();
+    if (token.isNotEmpty) {
+      request.headers['Authorization'] = 'Bearer $token';
+    }
+
+    final response = await request.send();
+    final bytes = await response.stream.toBytes();
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      final body = utf8.decode(bytes, allowMalformed: true);
+      throw Exception(
+        'Download failed (${response.statusCode}) from $gatewayUrl: $body',
+      );
+    }
+
+    final fileName =
+        _extractFileName(response.headers['content-disposition']) ??
+        'ipfs-${cid.substring(0, cid.length > 12 ? 12 : cid.length)}';
+
+    return RemoteDownloadResult(
+      bytes: bytes,
+      fileName: fileName,
+      mimeType: response.headers['content-type'] ?? '',
+      gatewayUrl: gatewayUrl,
+    );
   }
 
   Future<RemoteUploadResult> _uploadToPinata({
@@ -144,6 +197,7 @@ class RemoteUploadClient {
       cid: cid,
       target: config.target,
       endpoint: config.resolvedEndpoint,
+      gatewayUrl: _buildGatewayUrl(config.resolvedGatewayBase, cid),
     );
   }
 
@@ -153,11 +207,14 @@ class RemoteUploadClient {
     required String fileName,
     required String mimeType,
   }) async {
+    if (config.target == RemoteUploadTarget.filebase &&
+        config.authToken.trim().isEmpty) {
+      throw ArgumentError('Filebase RPC requires an API token.');
+    }
+
     final resolved = _appendQueryParameters(
       config.resolvedEndpoint,
-      const {
-        'cid-version': '1',
-      },
+      const {'cid-version': '1'},
     );
 
     final request = http.MultipartRequest('POST', Uri.parse(resolved))
@@ -191,6 +248,7 @@ class RemoteUploadClient {
       cid: cid,
       target: config.target,
       endpoint: config.resolvedEndpoint,
+      gatewayUrl: _buildGatewayUrl(config.resolvedGatewayBase, cid),
     );
   }
 
@@ -213,6 +271,26 @@ class RemoteUploadClient {
     return null;
   }
 
+  String? _extractFileName(String? contentDisposition) {
+    if (contentDisposition == null || contentDisposition.isEmpty) {
+      return null;
+    }
+
+    final utf8Match = RegExp(
+      r"filename\*=UTF-8''([^;]+)",
+      caseSensitive: false,
+    ).firstMatch(contentDisposition);
+    if (utf8Match != null) {
+      return Uri.decodeComponent(utf8Match.group(1)!);
+    }
+
+    final plainMatch = RegExp(
+      r'filename="?([^";]+)"?',
+      caseSensitive: false,
+    ).firstMatch(contentDisposition);
+    return plainMatch?.group(1);
+  }
+
   String _appendQueryParameters(
     String endpoint,
     Map<String, String> parameters,
@@ -222,4 +300,13 @@ class RemoteUploadClient {
     return uri.replace(queryParameters: merged).toString();
   }
 
+  String _buildGatewayUrl(String gatewayBase, String cid) {
+    final trimmed = gatewayBase.trim();
+    if (trimmed.contains('{cid}')) {
+      return trimmed.replaceAll('{cid}', cid);
+    }
+
+    final needsSlash = trimmed.isNotEmpty && !trimmed.endsWith('/');
+    return '${needsSlash ? '$trimmed/' : trimmed}$cid';
+  }
 }

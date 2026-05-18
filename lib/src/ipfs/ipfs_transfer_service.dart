@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io' show Directory, File;
 import 'dart:typed_data';
 
@@ -7,6 +8,8 @@ import 'package:file_picker/file_picker.dart';
 import 'package:mime/mime.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+
+import 'remote_upload_client.dart';
 
 class IpfsNodeSnapshot {
   const IpfsNodeSnapshot({
@@ -23,13 +26,25 @@ class IpfsNodeSnapshot {
 class PublishedImage {
   const PublishedImage({
     required this.cid,
+    required this.localCid,
     required this.fileName,
     required this.bytes,
+    required this.mimeType,
+    required this.peerBundle,
+    this.remoteCid,
+    this.remoteTarget,
+    this.remoteUploadMessage,
   });
 
   final String cid;
+  final String localCid;
   final String fileName;
   final Uint8List bytes;
+  final String mimeType;
+  final String peerBundle;
+  final String? remoteCid;
+  final RemoteUploadTarget? remoteTarget;
+  final String? remoteUploadMessage;
 }
 
 class DownloadedImage {
@@ -50,7 +65,23 @@ class DownloadedImage {
   bool get isImage => mimeType.startsWith('image/');
 }
 
+class PeerImportResult {
+  const PeerImportResult({
+    required this.peerId,
+    required this.multiaddr,
+    this.cid,
+  });
+
+  final String peerId;
+  final String multiaddr;
+  final String? cid;
+}
+
 class IpfsTransferService {
+  IpfsTransferService({RemoteUploadClient? remoteUploadClient})
+    : _remoteUploadClient = remoteUploadClient ?? RemoteUploadClient();
+
+  final RemoteUploadClient _remoteUploadClient;
   IPFSNode? _node;
   Future<void>? _startup;
 
@@ -69,7 +100,11 @@ class IpfsTransferService {
     return _snapshot();
   }
 
-  Future<PublishedImage?> pickAndPublishImage() async {
+  Future<PublishedImage?> pickAndPublishImage({
+    RemoteUploadConfig remoteUploadConfig = const RemoteUploadConfig(
+      target: RemoteUploadTarget.localOnly,
+    ),
+  }) async {
     final result = await FilePicker.pickFiles(
       type: FileType.image,
       allowMultiple: false,
@@ -91,13 +126,52 @@ class IpfsTransferService {
     final fileName = _sanitizeFileName(
       file.name.isEmpty ? 'shared-image' : file.name,
     );
-    final cid = _normalizeImmutableCid(
-      await _node!.addDirectory({fileName: bytes}),
-    );
-    await _node!.pin(cid);
-    await _announceProvider(cid);
+    final mimeType =
+        lookupMimeType(fileName, headerBytes: bytes) ??
+        lookupMimeType('', headerBytes: bytes) ??
+        'application/octet-stream';
 
-    return PublishedImage(cid: cid, fileName: fileName, bytes: bytes);
+    final localCid = _normalizeImmutableCid(await _node!.addFile(bytes));
+    await _node!.pin(localCid);
+    await _announceProvider(localCid);
+
+    String cidToShare = localCid;
+    String? remoteCid;
+    String? remoteUploadMessage;
+    RemoteUploadTarget? remoteTarget;
+
+    if (remoteUploadConfig.isEnabled) {
+      try {
+        final remoteUpload = await _remoteUploadClient.uploadFile(
+          config: remoteUploadConfig,
+          bytes: bytes,
+          fileName: fileName,
+          mimeType: mimeType,
+        );
+        if (remoteUpload != null) {
+          remoteCid = _normalizeImmutableCid(remoteUpload.cid);
+          cidToShare = remoteCid;
+          remoteTarget = remoteUpload.target;
+          remoteUploadMessage =
+              'Mirrored to ${remoteUpload.target.label} via ${remoteUpload.endpoint}.';
+        }
+      } catch (error) {
+        remoteUploadMessage =
+            'Remote upload failed. Sharing local CID instead. $error';
+      }
+    }
+
+    return PublishedImage(
+      cid: cidToShare,
+      localCid: localCid,
+      remoteCid: remoteCid,
+      remoteTarget: remoteTarget,
+      fileName: fileName,
+      bytes: bytes,
+      mimeType: mimeType,
+      peerBundle: await buildPeerBundle(cid: localCid),
+      remoteUploadMessage: remoteUploadMessage,
+    );
   }
 
   Future<DownloadedImage> downloadByCid(String rawCid) async {
@@ -145,11 +219,46 @@ class IpfsTransferService {
     );
   }
 
+  Future<String> buildPeerBundle({String? cid}) async {
+    final snapshot = await ensureStarted();
+    final usableAddresses = snapshot.addresses
+        .map((address) => _normalizeMultiaddr(address, snapshot.peerId))
+        .whereType<String>()
+        .where(_isShareableMultiaddr)
+        .toSet()
+        .toList();
+
+    final lines = <String>[
+      'PEER_ID=${snapshot.peerId}',
+      if (cid != null) 'CID=$cid',
+      ...usableAddresses.map((address) => 'MULTIADDR=$address'),
+    ];
+
+    return lines.join('\n');
+  }
+
+  Future<PeerImportResult> connectToSharedPeer(String rawText) async {
+    await ensureStarted();
+
+    final parsed = _parsePeerBundle(rawText);
+    await _node!.connectToPeer(parsed.multiaddr);
+    return parsed;
+  }
+
   Future<void> shareCid(String cid) {
     return SharePlus.instance.share(
       ShareParams(
         text: cid,
         subject: 'IPFS content identifier',
+      ),
+    );
+  }
+
+  Future<void> sharePeerBundle(String peerBundle) {
+    return SharePlus.instance.share(
+      ShareParams(
+        text: peerBundle,
+        subject: 'IPFS peer address bundle',
       ),
     );
   }
@@ -285,6 +394,97 @@ class IpfsTransferService {
         'Invalid CID. It looks truncated or malformed. Paste the full immutable CID, usually starting with "bafy..." or "Qm...".',
       );
     }
+  }
+
+  PeerImportResult _parsePeerBundle(String rawText) {
+    final lines = const LineSplitter().convert(rawText.trim());
+    String? peerId;
+    String? multiaddr;
+    String? cid;
+
+    for (final rawLine in lines) {
+      final line = rawLine.trim();
+      if (line.isEmpty) {
+        continue;
+      }
+
+      if (line.startsWith('CID=')) {
+        cid = line.substring(4).trim();
+        continue;
+      }
+
+      if (line.startsWith('PEER_ID=')) {
+        peerId = line.substring(8).trim();
+        continue;
+      }
+
+      if (line.startsWith('MULTIADDR=')) {
+        multiaddr = line.substring(10).trim();
+        continue;
+      }
+
+      if (line.startsWith('/')) {
+        multiaddr = line;
+      }
+    }
+
+    final normalizedMultiaddr = _normalizeMultiaddr(multiaddr, peerId);
+    if (normalizedMultiaddr == null) {
+      throw ArgumentError(
+        'No usable multiaddr found. Paste a bundle containing MULTIADDR=/.../p2p/<peerId>.',
+      );
+    }
+
+    final resolvedPeerId = _extractPeerIdFromMultiaddr(normalizedMultiaddr);
+    if (resolvedPeerId == null || resolvedPeerId.isEmpty) {
+      throw ArgumentError(
+        'The shared multiaddr must include a /p2p/<peerId> suffix.',
+      );
+    }
+
+    return PeerImportResult(
+      peerId: resolvedPeerId,
+      multiaddr: normalizedMultiaddr,
+      cid: cid == null || cid.isEmpty ? null : _normalizeImmutableCid(cid),
+    );
+  }
+
+  String? _normalizeMultiaddr(String? address, String? peerId) {
+    if (address == null) {
+      return null;
+    }
+
+    var normalized = address.trim();
+    if (normalized.isEmpty) {
+      return null;
+    }
+
+    normalized = normalized.replaceAll('/ipfs/', '/p2p/');
+    if (!normalized.contains('/p2p/')) {
+      final resolvedPeerId = peerId?.trim();
+      if (resolvedPeerId == null || resolvedPeerId.isEmpty) {
+        return null;
+      }
+      normalized = '$normalized/p2p/$resolvedPeerId';
+    }
+
+    return normalized;
+  }
+
+  String? _extractPeerIdFromMultiaddr(String multiaddr) {
+    final parts = multiaddr.split('/');
+    final p2pIndex = parts.indexOf('p2p');
+    if (p2pIndex == -1 || p2pIndex + 1 >= parts.length) {
+      return null;
+    }
+    return parts[p2pIndex + 1];
+  }
+
+  bool _isShareableMultiaddr(String multiaddr) {
+    return !multiaddr.contains('/ip4/0.0.0.0/') &&
+        !multiaddr.contains('/ip4/127.0.0.1/') &&
+        !multiaddr.contains('/ip6/::/') &&
+        !multiaddr.contains('/ip6/::1/');
   }
 
   bool _hasExtension(String fileName) {

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'ipfs/ipfs_transfer_service.dart';
+import 'ipfs/remote_upload_client.dart';
 
 class IpfsPhotoRelayPage extends StatefulWidget {
   const IpfsPhotoRelayPage({
@@ -23,14 +24,21 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
   late final IpfsTransferService _service =
       widget.service ?? IpfsTransferService();
   final TextEditingController _cidController = TextEditingController();
+  final TextEditingController _peerBundleController = TextEditingController();
+  final TextEditingController _endpointController = TextEditingController();
+  final TextEditingController _authTokenController = TextEditingController();
 
   IpfsNodeSnapshot? _snapshot;
   PublishedImage? _publishedImage;
   DownloadedImage? _downloadedImage;
+  PeerImportResult? _connectedPeer;
+
+  RemoteUploadTarget _uploadTarget = RemoteUploadTarget.localOnly;
 
   bool _isStarting = false;
   bool _isPublishing = false;
   bool _isDownloading = false;
+  bool _isConnectingPeer = false;
 
   String _statusMessage = 'Starting embedded IPFS node...';
   String? _errorMessage;
@@ -38,6 +46,7 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
   @override
   void initState() {
     super.initState();
+    _applyUploadTargetDefaults(_uploadTarget);
     if (widget.startNodeOnLoad) {
       _initializeNode();
     } else {
@@ -48,6 +57,9 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
   @override
   void dispose() {
     _cidController.dispose();
+    _peerBundleController.dispose();
+    _endpointController.dispose();
+    _authTokenController.dispose();
     unawaited(_service.dispose());
     super.dispose();
   }
@@ -67,7 +79,8 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
 
       setState(() {
         _snapshot = snapshot;
-        _statusMessage = 'Node online. Share a CID with the other phone.';
+        _statusMessage =
+            'Node online. Share a CID, a peer bundle, or mirror content to a remote IPFS backend.';
       });
     } catch (error) {
       if (!mounted) {
@@ -95,7 +108,9 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
     });
 
     try {
-      final publishedImage = await _service.pickAndPublishImage();
+      final publishedImage = await _service.pickAndPublishImage(
+        remoteUploadConfig: _currentRemoteUploadConfig(),
+      );
       if (!mounted) {
         return;
       }
@@ -177,6 +192,56 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
     }
   }
 
+  Future<void> _connectPeerBundle() async {
+    final bundle = _peerBundleController.text.trim();
+    if (bundle.isEmpty) {
+      _showSnack('Paste a shared peer bundle first.');
+      return;
+    }
+
+    setState(() {
+      _isConnectingPeer = true;
+      _errorMessage = null;
+      _statusMessage = 'Importing peer bundle and opening a P2P connection...';
+    });
+
+    try {
+      final connectedPeer = await _service.connectToSharedPeer(bundle);
+      if (!mounted) {
+        return;
+      }
+
+      final snapshot = await _service.ensureStarted();
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _snapshot = snapshot;
+        _connectedPeer = connectedPeer;
+        if (connectedPeer.cid != null) {
+          _cidController.text = connectedPeer.cid!;
+        }
+        _statusMessage = 'Connected to peer ${connectedPeer.peerId}.';
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _errorMessage = error.toString();
+        _statusMessage = 'Peer import failed.';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isConnectingPeer = false;
+        });
+      }
+    }
+  }
+
   Future<void> _shareCid() async {
     final cid = _publishedImage?.cid;
     if (cid == null) {
@@ -189,6 +254,26 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
         return;
       }
       _showSnack('CID shared.');
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      _showSnack('Sharing failed: $error');
+    }
+  }
+
+  Future<void> _sharePeerBundle() async {
+    final bundle = _publishedImage?.peerBundle;
+    if (bundle == null) {
+      return;
+    }
+
+    try {
+      await _service.sharePeerBundle(bundle);
+      if (!mounted) {
+        return;
+      }
+      _showSnack('Peer bundle shared.');
     } catch (error) {
       if (!mounted) {
         return;
@@ -217,15 +302,15 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
     }
   }
 
-  Future<void> _copyCid(String cid) async {
-    await Clipboard.setData(ClipboardData(text: cid));
+  Future<void> _copyText(String text, String label) async {
+    await Clipboard.setData(ClipboardData(text: text));
     if (!mounted) {
       return;
     }
-    _showSnack('CID copied to the clipboard.');
+    _showSnack('$label copied to the clipboard.');
   }
 
-  Future<void> _pasteCid() async {
+  Future<void> _pasteIntoController(TextEditingController controller) async {
     final data = await Clipboard.getData(Clipboard.kTextPlain);
     final text = data?.text?.trim();
     if (text == null || text.isEmpty) {
@@ -236,13 +321,60 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
       return;
     }
 
-    _cidController.text = text;
+    controller.text = text;
   }
 
   void _showSnack(String message) {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  RemoteUploadConfig _currentRemoteUploadConfig() {
+    return RemoteUploadConfig(
+      target: _uploadTarget,
+      endpoint: _endpointController.text,
+      authToken: _authTokenController.text,
+    );
+  }
+
+  void _applyUploadTargetDefaults(RemoteUploadTarget target) {
+    switch (target) {
+      case RemoteUploadTarget.localOnly:
+        _endpointController.text = '';
+      case RemoteUploadTarget.pinata:
+        _endpointController.text = 'https://api.pinata.cloud/pinning/pinFileToIPFS';
+      case RemoteUploadTarget.filebase:
+        _endpointController.text = 'https://rpc.filebase.io/api/v0/add';
+      case RemoteUploadTarget.kubo:
+        _endpointController.text = 'http://127.0.0.1:5001/api/v0/add';
+    }
+  }
+
+  String get _authTokenLabel {
+    switch (_uploadTarget) {
+      case RemoteUploadTarget.localOnly:
+        return 'Auth token';
+      case RemoteUploadTarget.pinata:
+        return 'Pinata JWT';
+      case RemoteUploadTarget.filebase:
+        return 'Filebase API key';
+      case RemoteUploadTarget.kubo:
+        return 'Bearer token (optional)';
+    }
+  }
+
+  String get _uploadDescription {
+    switch (_uploadTarget) {
+      case RemoteUploadTarget.localOnly:
+        return 'Only publish to the embedded phone node.';
+      case RemoteUploadTarget.pinata:
+        return 'Upload the file directly to Pinata using the `pinFileToIPFS` endpoint.';
+      case RemoteUploadTarget.filebase:
+        return 'Upload the file through Filebase\'s official Kubo-compatible RPC API.';
+      case RemoteUploadTarget.kubo:
+        return 'Upload the file to a self-hosted Kubo RPC endpoint, for example over VPN.';
+    }
   }
 
   @override
@@ -276,7 +408,7 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
               child: Center(
                 child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 820),
+                  constraints: const BoxConstraints(maxWidth: 900),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
@@ -290,10 +422,73 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
                       _TipsCard(theme: theme),
                       const SizedBox(height: 16),
                       _SectionCard(
-                        eyebrow: 'Phone A',
-                        title: 'Publish an image and share its CID',
+                        eyebrow: 'Delivery Path',
+                        title: 'Choose where the file should live',
                         description:
-                            'Pick a photo, add it to the embedded IPFS node, then send only the CID through your messenger app.',
+                            'Use the phone node only for direct P2P experiments, or mirror the same file to Pinata, Filebase, or a Kubo API so the CID has a stronger chance of being retrievable across networks.',
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            DropdownButtonFormField<RemoteUploadTarget>(
+                              initialValue: _uploadTarget,
+                              decoration: InputDecoration(
+                                labelText: 'Upload path',
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(18),
+                                ),
+                              ),
+                              items: RemoteUploadTarget.values
+                                  .map(
+                                    (target) => DropdownMenuItem(
+                                      value: target,
+                                      child: Text(target.label),
+                                    ),
+                                  )
+                                  .toList(),
+                              onChanged: (target) {
+                                if (target == null) {
+                                  return;
+                                }
+                                setState(() {
+                                  _uploadTarget = target;
+                                  _applyUploadTargetDefaults(target);
+                                });
+                              },
+                            ),
+                            const SizedBox(height: 12),
+                            Text(_uploadDescription, style: theme.textTheme.bodyMedium),
+                            if (_uploadTarget != RemoteUploadTarget.localOnly) ...[
+                              const SizedBox(height: 12),
+                              TextField(
+                                controller: _endpointController,
+                                decoration: InputDecoration(
+                                  labelText: 'Endpoint',
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(18),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              TextField(
+                                controller: _authTokenController,
+                                obscureText: true,
+                                decoration: InputDecoration(
+                                  labelText: _authTokenLabel,
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(18),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      _SectionCard(
+                        eyebrow: 'Phone A',
+                        title: 'Publish the image and share the route',
+                        description:
+                            'Publishing creates a local IPFS CID, optionally mirrors the file to a remote backend, and prepares a peer bundle with multiaddrs that you can share separately if you want to try direct P2P.',
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
@@ -316,13 +511,32 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
                             if (publishedImage != null) ...[
                               const SizedBox(height: 16),
                               _MetaRow(
-                                label: 'File',
-                                value: publishedImage.fileName,
+                                label: 'Shareable CID',
+                                value: publishedImage.cid,
                               ),
                               const SizedBox(height: 8),
                               _MetaRow(
-                                label: 'CID',
-                                value: publishedImage.cid,
+                                label: 'Local CID',
+                                value: publishedImage.localCid,
+                              ),
+                              if (publishedImage.remoteCid != null) ...[
+                                const SizedBox(height: 8),
+                                _MetaRow(
+                                  label: 'Remote CID (${publishedImage.remoteTarget?.label})',
+                                  value: publishedImage.remoteCid!,
+                                ),
+                              ],
+                              if (publishedImage.remoteUploadMessage != null) ...[
+                                const SizedBox(height: 8),
+                                Text(
+                                  publishedImage.remoteUploadMessage!,
+                                  style: theme.textTheme.bodyMedium,
+                                ),
+                              ],
+                              const SizedBox(height: 8),
+                              _MetaRow(
+                                label: 'Peer bundle',
+                                value: publishedImage.peerBundle,
                               ),
                               const SizedBox(height: 12),
                               Wrap(
@@ -330,7 +544,10 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
                                 runSpacing: 12,
                                 children: [
                                   OutlinedButton.icon(
-                                    onPressed: () => _copyCid(publishedImage.cid),
+                                    onPressed: () => _copyText(
+                                      publishedImage.cid,
+                                      'CID',
+                                    ),
                                     icon: const Icon(Icons.copy_rounded),
                                     label: const Text('Copy CID'),
                                   ),
@@ -338,6 +555,19 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
                                     onPressed: _shareCid,
                                     icon: const Icon(Icons.share_outlined),
                                     label: const Text('Share CID'),
+                                  ),
+                                  OutlinedButton.icon(
+                                    onPressed: () => _copyText(
+                                      publishedImage.peerBundle,
+                                      'Peer bundle',
+                                    ),
+                                    icon: const Icon(Icons.copy_all_rounded),
+                                    label: const Text('Copy Peer Bundle'),
+                                  ),
+                                  FilledButton.tonalIcon(
+                                    onPressed: _sharePeerBundle,
+                                    icon: const Icon(Icons.route_outlined),
+                                    label: const Text('Share Peer Bundle'),
                                   ),
                                 ],
                               ),
@@ -359,12 +589,61 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
                       const SizedBox(height: 16),
                       _SectionCard(
                         eyebrow: 'Phone B',
-                        title: 'Paste the CID and fetch the image',
+                        title: 'Import a peer bundle and fetch by CID',
                         description:
-                            'Enter the CID received from the first phone, then resolve it through the IPFS node and share the downloaded file so it can be saved.',
+                            'Paste a shared multiaddr bundle to try a direct P2P connection, or just paste the CID if the content was mirrored to a remote IPFS backend.',
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
+                            TextField(
+                              controller: _peerBundleController,
+                              minLines: 3,
+                              maxLines: 7,
+                              decoration: InputDecoration(
+                                labelText: 'Peer bundle or multiaddr',
+                                hintText: 'PEER_ID=...\nCID=...\nMULTIADDR=/ip4/.../tcp/.../p2p/...',
+                                suffixIcon: IconButton(
+                                  tooltip: 'Paste peer bundle',
+                                  onPressed: () => _pasteIntoController(
+                                    _peerBundleController,
+                                  ),
+                                  icon: const Icon(Icons.content_paste_rounded),
+                                ),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(18),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            FilledButton.icon(
+                              onPressed:
+                                  _isStarting || _isConnectingPeer
+                                      ? null
+                                      : _connectPeerBundle,
+                              icon: _isConnectingPeer
+                                  ? const SizedBox(
+                                      width: 18,
+                                      height: 18,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                  : const Icon(Icons.link_rounded),
+                              label: const Text('Import And Connect'),
+                            ),
+                            if (_connectedPeer != null) ...[
+                              const SizedBox(height: 12),
+                              _MetaRow(
+                                label: 'Connected peer',
+                                value: _connectedPeer!.peerId,
+                              ),
+                              const SizedBox(height: 8),
+                              _MetaRow(
+                                label: 'Using multiaddr',
+                                value: _connectedPeer!.multiaddr,
+                              ),
+                            ],
+                            const SizedBox(height: 16),
                             TextField(
                               controller: _cidController,
                               minLines: 1,
@@ -374,7 +653,9 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
                                 hintText: 'bafy... or Qm...',
                                 suffixIcon: IconButton(
                                   tooltip: 'Paste CID',
-                                  onPressed: _pasteCid,
+                                  onPressed: () => _pasteIntoController(
+                                    _cidController,
+                                  ),
                                   icon: const Icon(Icons.content_paste_rounded),
                                 ),
                                 border: OutlineInputBorder(
@@ -558,17 +839,17 @@ class _TipsCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'How to try it on two phones',
+              'Practical test flow',
               style: theme.textTheme.titleMedium?.copyWith(
                 fontWeight: FontWeight.w700,
               ),
             ),
             const SizedBox(height: 12),
-            const Text('1. Install the app on both phones and keep both apps open.'),
+            const Text('1. Publish the image locally, and mirror it to Pinata, Filebase RPC, or your Kubo API if you want CID-only retrieval across networks.'),
             const SizedBox(height: 6),
-            const Text('2. On phone A, publish a picture and share the CID with any messenger app.'),
+            const Text('2. Share the CID through your short-message channel, and share the peer bundle separately if you also want to test direct P2P dialing.'),
             const SizedBox(height: 6),
-            const Text('3. On phone B, paste the CID, download the image, and share it to Files or Photos to save it.'),
+            const Text('3. On the receiving phone, import the peer bundle first when trying P2P, then fetch by CID.'),
           ],
         ),
       ),
@@ -681,7 +962,7 @@ class _InfoChip extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 4),
-          Text(value, maxLines: 3, overflow: TextOverflow.ellipsis),
+          Text(value, maxLines: 4, overflow: TextOverflow.ellipsis),
         ],
       ),
     );

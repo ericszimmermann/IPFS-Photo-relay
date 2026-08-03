@@ -149,6 +149,15 @@ class IpfsTransferService {
     );
   }
 
+  Future<void> shareGatewayUrl(String gatewayUrl) {
+    return SharePlus.instance.share(
+      ShareParams(
+        text: gatewayUrl,
+        subject: 'IPFS gateway URL',
+      ),
+    );
+  }
+
   Future<void> shareDownloadedFile(DownloadedImage image) {
     return SharePlus.instance.share(
       ShareParams(

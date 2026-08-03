@@ -228,6 +228,26 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
     }
   }
 
+  Future<void> _sharePublishedGatewayUrl() async {
+    final gatewayUrl = _publishedImage?.gatewayUrl;
+    if (gatewayUrl == null) {
+      return;
+    }
+
+    try {
+      await _service.shareGatewayUrl(gatewayUrl);
+      if (!mounted) {
+        return;
+      }
+      _showSnack('Gateway URL shared.');
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      _showSnack('Sharing failed: $error');
+    }
+  }
+
   Future<void> _shareDownloadedFile() async {
     final image = _downloadedImage;
     if (image == null) {
@@ -618,6 +638,19 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
                                     onPressed: _shareCid,
                                     icon: const Icon(Icons.share_outlined),
                                     label: const Text('Share CID'),
+                                  ),
+                                  OutlinedButton.icon(
+                                    onPressed: () => _copyText(
+                                      publishedImage.gatewayUrl,
+                                      'Gateway URL',
+                                    ),
+                                    icon: const Icon(Icons.link_rounded),
+                                    label: const Text('Copy Gateway URL'),
+                                  ),
+                                  FilledButton.tonalIcon(
+                                    onPressed: _sharePublishedGatewayUrl,
+                                    icon: const Icon(Icons.ios_share_rounded),
+                                    label: const Text('Share Gateway URL'),
                                   ),
                                 ],
                               ),

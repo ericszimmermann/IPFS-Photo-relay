@@ -216,22 +216,54 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
     return RemoteUploadConfig(
       target: _uploadTarget,
       endpoint: _endpointController.text,
-      gatewayBase: _gatewayController.text,
+      gatewayBase: _normalizeGatewayBase(_gatewayController.text),
       authToken: _authTokenController.text,
     );
   }
 
+  String _normalizeGatewayBase(String value) {
+    var normalizedValue = value.trim();
+    if (normalizedValue.isEmpty) {
+      return normalizedValue;
+    }
+
+    if (!normalizedValue.toLowerCase().startsWith('http')) {
+      normalizedValue = 'https://$normalizedValue';
+    }
+
+    if (!normalizedValue.endsWith('/ipfs/')) {
+      if (normalizedValue.endsWith('/ipfs')) {
+        normalizedValue = '$normalizedValue/';
+      } else {
+        normalizedValue = '$normalizedValue/ipfs/';
+      }
+    }
+
+    return normalizedValue;
+  }
+
+  void _applyGatewayValidation(String value) {
+    final normalizedValue = _normalizeGatewayBase(value);
+    if (normalizedValue != value) {
+      _gatewayController.value = TextEditingValue(
+        text: normalizedValue,
+        selection: TextSelection.collapsed(offset: normalizedValue.length),
+      );
+    }
+  }
+
   void _persistCurrentTargetFields() {
     _endpointOverrides[_uploadTarget] = _endpointController.text;
-    _gatewayOverrides[_uploadTarget] = _gatewayController.text;
+    _gatewayOverrides[_uploadTarget] = _normalizeGatewayBase(_gatewayController.text);
     _authTokenOverrides[_uploadTarget] = _authTokenController.text;
   }
 
   void _loadTargetFields(RemoteUploadTarget target) {
     _endpointController.text =
         _endpointOverrides[target] ?? target.defaultUploadEndpoint;
-    _gatewayController.text =
-        _gatewayOverrides[target] ?? target.defaultGatewayBase;
+    _gatewayController.text = _normalizeGatewayBase(
+      _gatewayOverrides[target] ?? target.defaultGatewayBase,
+    );
     _authTokenController.text = _authTokenOverrides[target] ?? '';
   }
 
@@ -348,6 +380,7 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
                             const SizedBox(height: 12),
                             TextField(
                               controller: _gatewayController,
+                              onChanged: _applyGatewayValidation,
                               decoration: InputDecoration(
                                 labelText: 'Gateway base',
                                 hintText: 'https://gateway.example.com/ipfs/',

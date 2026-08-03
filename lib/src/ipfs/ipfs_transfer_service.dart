@@ -28,6 +28,8 @@ class PublishedImage {
   final String uploadEndpoint;
   final String gatewayUrl;
   final String? remoteUploadMessage;
+
+  bool get isImage => mimeType.startsWith('image/');
 }
 
 class DownloadedImage {

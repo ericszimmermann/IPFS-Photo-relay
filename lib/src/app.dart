@@ -654,17 +654,19 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
                                   ),
                                 ],
                               ),
-                              const SizedBox(height: 16),
-                              ClipRRect(
-                                borderRadius: BorderRadius.circular(20),
-                                child: AspectRatio(
-                                  aspectRatio: 4 / 3,
-                                  child: Image.memory(
-                                    publishedImage.bytes,
-                                    fit: BoxFit.cover,
+                              if (publishedImage.isImage) ...[
+                                const SizedBox(height: 16),
+                                ClipRRect(
+                                  borderRadius: BorderRadius.circular(20),
+                                  child: AspectRatio(
+                                    aspectRatio: 4 / 3,
+                                    child: Image.memory(
+                                      publishedImage.bytes,
+                                      fit: BoxFit.cover,
+                                    ),
                                   ),
                                 ),
-                              ),
+                              ],
                             ],
                           ],
                         ),

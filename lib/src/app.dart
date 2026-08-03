@@ -286,24 +286,7 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
   }
 
   String _normalizeGatewayBase(String value) {
-    var normalizedValue = value.trim();
-    if (normalizedValue.isEmpty) {
-      return normalizedValue;
-    }
-
-    if (!normalizedValue.toLowerCase().startsWith('http')) {
-      normalizedValue = 'https://$normalizedValue';
-    }
-
-    if (!normalizedValue.endsWith('/ipfs/')) {
-      if (normalizedValue.endsWith('/ipfs')) {
-        normalizedValue = '$normalizedValue/';
-      } else {
-        normalizedValue = '$normalizedValue/ipfs/';
-      }
-    }
-
-    return normalizedValue;
+    return normalizeGatewayBase(value);
   }
 
   void _applyGatewayValidation(String value) {

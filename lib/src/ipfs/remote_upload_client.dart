@@ -3,6 +3,36 @@ import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
+String normalizeGatewayBase(String value) {
+  var normalizedValue = value.trim();
+  if (normalizedValue.isEmpty) {
+    return normalizedValue;
+  }
+
+  final hasHttpScheme =
+      normalizedValue.toLowerCase().startsWith('http://') ||
+      normalizedValue.toLowerCase().startsWith('https://');
+  if (!hasHttpScheme) {
+    normalizedValue = 'https://$normalizedValue';
+  }
+
+  if (normalizedValue.contains('{cid}')) {
+    return normalizedValue;
+  }
+
+  if (!normalizedValue.endsWith('/ipfs/')) {
+    if (normalizedValue.endsWith('/ipfs')) {
+      normalizedValue = '$normalizedValue/';
+    } else if (normalizedValue.endsWith('/')) {
+      normalizedValue = '${normalizedValue}ipfs/';
+    } else {
+      normalizedValue = '$normalizedValue/ipfs/';
+    }
+  }
+
+  return normalizedValue;
+}
+
 enum RemoteUploadTarget {
   pinata,
   filebase,
@@ -64,7 +94,8 @@ class RemoteUploadConfig {
 
   String get resolvedGatewayBase {
     final trimmed = gatewayBase.trim();
-    return trimmed.isEmpty ? target.defaultGatewayBase : trimmed;
+    final resolved = trimmed.isEmpty ? target.defaultGatewayBase : trimmed;
+    return normalizeGatewayBase(resolved);
   }
 }
 

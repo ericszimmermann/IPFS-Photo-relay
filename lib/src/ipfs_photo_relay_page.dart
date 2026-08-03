@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'ipfs/ipfs_transfer_service.dart';
 import 'ipfs/remote_upload_client.dart';
@@ -21,8 +22,15 @@ class IpfsPhotoRelayPage extends StatefulWidget {
 }
 
 class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
+  static const String _prefsUploadTargetKey = 'relay.uploadTarget';
+  static const String _prefsEndpointPrefix = 'relay.endpoint.';
+  static const String _prefsGatewayPrefix = 'relay.gateway.';
+  static const String _prefsAuthTokenPrefix = 'relay.authToken.';
+
   late final IpfsTransferService _service =
       widget.service ?? IpfsTransferService();
+  late final Future<SharedPreferences> _prefsFuture =
+      SharedPreferences.getInstance();
   final TextEditingController _cidController = TextEditingController();
   final TextEditingController _endpointController = TextEditingController();
   final TextEditingController _gatewayController = TextEditingController();
@@ -47,10 +55,12 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
   void initState() {
     super.initState();
     _loadTargetFields(_uploadTarget);
+    unawaited(_restorePersistedSettings());
   }
 
   @override
   void dispose() {
+    unawaited(_persistSettings());
     _cidController.dispose();
     _endpointController.dispose();
     _gatewayController.dispose();
@@ -254,8 +264,93 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
 
   void _persistCurrentTargetFields() {
     _endpointOverrides[_uploadTarget] = _endpointController.text;
-    _gatewayOverrides[_uploadTarget] = _normalizeGatewayBase(_gatewayController.text);
+    _gatewayOverrides[_uploadTarget] =
+        _normalizeGatewayBase(_gatewayController.text);
     _authTokenOverrides[_uploadTarget] = _authTokenController.text;
+  }
+
+  Future<void> _persistSettings() async {
+    _persistCurrentTargetFields();
+
+    final prefs = await _prefsFuture;
+    await prefs.setString(_prefsUploadTargetKey, _uploadTarget.name);
+
+    for (final target in RemoteUploadTarget.values) {
+      final endpointKey = '$_prefsEndpointPrefix${target.name}';
+      final gatewayKey = '$_prefsGatewayPrefix${target.name}';
+      final tokenKey = '$_prefsAuthTokenPrefix${target.name}';
+
+      final endpoint = _endpointOverrides[target]?.trim() ?? '';
+      final gateway =
+          _normalizeGatewayBase(_gatewayOverrides[target]?.trim() ?? '');
+      final token = _authTokenOverrides[target]?.trim() ?? '';
+
+      if (endpoint.isEmpty) {
+        await prefs.remove(endpointKey);
+      } else {
+        await prefs.setString(endpointKey, endpoint);
+      }
+
+      if (gateway.isEmpty) {
+        await prefs.remove(gatewayKey);
+      } else {
+        await prefs.setString(gatewayKey, gateway);
+      }
+
+      if (token.isEmpty) {
+        await prefs.remove(tokenKey);
+      } else {
+        await prefs.setString(tokenKey, token);
+      }
+    }
+  }
+
+  RemoteUploadTarget? _targetFromName(String? name) {
+    if (name == null) {
+      return null;
+    }
+
+    for (final target in RemoteUploadTarget.values) {
+      if (target.name == name) {
+        return target;
+      }
+    }
+    return null;
+  }
+
+  Future<void> _restorePersistedSettings() async {
+    final prefs = await _prefsFuture;
+
+    for (final target in RemoteUploadTarget.values) {
+      final endpoint = prefs.getString('$_prefsEndpointPrefix${target.name}');
+      final gateway = prefs.getString('$_prefsGatewayPrefix${target.name}');
+      final token = prefs.getString('$_prefsAuthTokenPrefix${target.name}');
+
+      if (endpoint != null) {
+        _endpointOverrides[target] = endpoint;
+      }
+      if (gateway != null) {
+        _gatewayOverrides[target] = gateway;
+      }
+      if (token != null) {
+        _authTokenOverrides[target] = token;
+      }
+    }
+
+    final persistedTarget = _targetFromName(
+      prefs.getString(_prefsUploadTargetKey),
+    );
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      if (persistedTarget != null) {
+        _uploadTarget = persistedTarget;
+      }
+      _loadTargetFields(_uploadTarget);
+    });
   }
 
   void _loadTargetFields(RemoteUploadTarget target) {
@@ -273,6 +368,20 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
       _uploadTarget = target;
       _loadTargetFields(target);
     });
+    unawaited(_persistSettings());
+  }
+
+  void _onEndpointChanged(String _) {
+    unawaited(_persistSettings());
+  }
+
+  void _onGatewayChanged(String value) {
+    _applyGatewayValidation(value);
+    unawaited(_persistSettings());
+  }
+
+  void _onAuthTokenChanged(String _) {
+    unawaited(_persistSettings());
   }
 
   String get _authTokenLabel {
@@ -370,6 +479,7 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
                             const SizedBox(height: 12),
                             TextField(
                               controller: _endpointController,
+                              onChanged: _onEndpointChanged,
                               decoration: InputDecoration(
                                 labelText: 'Upload endpoint',
                                 border: OutlineInputBorder(
@@ -380,7 +490,7 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
                             const SizedBox(height: 12),
                             TextField(
                               controller: _gatewayController,
-                              onChanged: _applyGatewayValidation,
+                              onChanged: _onGatewayChanged,
                               decoration: InputDecoration(
                                 labelText: 'Gateway base',
                                 hintText: 'https://gateway.example.com/ipfs/',
@@ -392,6 +502,7 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
                             const SizedBox(height: 12),
                             TextField(
                               controller: _authTokenController,
+                              onChanged: _onAuthTokenChanged,
                               obscureText: true,
                               decoration: InputDecoration(
                                 labelText: _authTokenLabel,

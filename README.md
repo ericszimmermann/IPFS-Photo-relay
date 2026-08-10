@@ -6,7 +6,7 @@ Simple Flutter proof of concept for sending a picture between two phones by shar
 
 - The local `dart_ipfs` node dependency was removed.
 - The app is now remote-only.
-- Uploads go directly to Pinata, Filebase RPC, or a self-hosted Kubo API.
+- Uploads go directly to Pinata, Filebase RPC, IPFS.NINJA, or a self-hosted Kubo API.
 - Downloads happen through a configurable gateway instead of Bitswap or local peer discovery.
 
 This branch is the better fit if your real delivery path is still remote anyway and you do not want the native complexity of an embedded IPFS node in the mobile app.
@@ -21,7 +21,7 @@ This branch is the better fit if your real delivery path is still remote anyway 
 ## Project Shape
 
 - `lib/src/ipfs/ipfs_transfer_service.dart`: file picking, remote upload, remote download, CID validation, and share helpers.
-- `lib/src/ipfs/remote_upload_client.dart`: HTTP client for Pinata, Filebase RPC, Kubo-compatible upload APIs, and gateway downloads.
+- `lib/src/ipfs/remote_upload_client.dart`: HTTP client for Pinata, Filebase RPC, IPFS.NINJA, Kubo-compatible upload APIs, and gateway downloads.
 - `lib/src/ipfs_photo_relay_page.dart`: remote-only proof-of-concept UI.
 - `lib/src/app.dart`: app theme and top-level wiring.
 
@@ -55,6 +55,12 @@ Install it on two phones, then:
 - Upload endpoint default: `https://rpc.filebase.io/api/v0/add`
 - Gateway default: `https://ipfs.filebase.io/ipfs/`
 - Auth: Filebase API token sent as `Authorization: Bearer <token>`
+
+### IPFS.NINJA
+
+- Upload endpoint default: `https://api.ipfs.ninja/upload/new`
+- Gateway default: `https://ipfs.ninja/ipfs/`
+- Auth: IPFS.NINJA API key sent as `X-Api-Key`
 
 ### Self-Hosted Kubo
 

@@ -102,7 +102,7 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
   bool _isDownloading = false;
 
   String _statusMessage =
-      'Remote mode active. Upload to Pinata, Filebase RPC, or a Kubo node.';
+      'Remote mode active. Upload to Pinata, Filebase RPC, IPFS.NINJA, or a Kubo node.';
   String? _errorMessage;
 
   @override
@@ -447,6 +447,8 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
         return 'Pinata JWT';
       case RemoteUploadTarget.filebase:
         return 'Filebase API token';
+      case RemoteUploadTarget.ipfsNinja:
+        return 'IPFS.NINJA API key';
       case RemoteUploadTarget.kubo:
         return 'Bearer token (optional)';
     }
@@ -458,6 +460,8 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
         return 'Upload the file directly to Pinata and fetch it again through a Pinata gateway.';
       case RemoteUploadTarget.filebase:
         return 'Upload through Filebase\'s Kubo-compatible RPC API and retrieve through the Filebase IPFS gateway.';
+      case RemoteUploadTarget.ipfsNinja:
+        return 'Upload through IPFS.NINJA\'s REST API and retrieve through its public IPFS gateway.';
       case RemoteUploadTarget.kubo:
         return 'Upload to your own Kubo API and fetch from your chosen gateway, including a VPN-exposed node.';
     }
@@ -502,7 +506,7 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
                         eyebrow: 'Remote Backend',
                         title: 'Choose where the file will live',
                         description:
-                            'This branch is remote-only. The app uploads straight to Pinata, Filebase RPC, or your own Kubo API and later fetches the CID back through a gateway.',
+                            'This branch is remote-only. The app uploads straight to Pinata, Filebase RPC, IPFS.NINJA, or your own Kubo API and later fetches the CID back through a gateway.',
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
@@ -573,7 +577,7 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
                       ),
                       const SizedBox(height: 16),
                       _SectionCard(
-                        eyebrow: 'Phone A',
+                        eyebrow: 'Send',
                         title: 'Upload the image and share the CID',
                         description:
                             'Publishing uploads the file to the configured remote backend and returns the shareable CID. This is the path to use when you do not want the app to run a local IPFS node.',
@@ -673,7 +677,7 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
                       ),
                       const SizedBox(height: 16),
                       _SectionCard(
-                        eyebrow: 'Phone B',
+                        eyebrow: 'Receive',
                         title: 'Fetch the image through a gateway',
                         description:
                             'Paste the CID, point the app at a gateway that can serve it, and the downloaded file can be shared into Photos or Files.',

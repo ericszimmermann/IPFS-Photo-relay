@@ -33,12 +33,7 @@ String normalizeGatewayBase(String value) {
   return normalizedValue;
 }
 
-enum RemoteUploadTarget {
-  pinata,
-  filebase,
-  ipfsNinja,
-  kubo,
-}
+enum RemoteUploadTarget { pinata, filebase, ipfsNinja, kubo }
 
 extension RemoteUploadTargetLabel on RemoteUploadTarget {
   String get label {
@@ -211,20 +206,14 @@ class RemoteUploadClient {
       throw ArgumentError('Pinata requires a JWT or API bearer token.');
     }
 
-    final request = http.MultipartRequest(
-      'POST',
-      Uri.parse(config.resolvedEndpoint),
-    )
-      ..headers['Authorization'] = 'Bearer $token'
-      ..fields['pinataOptions'] = jsonEncode({'cidVersion': 1})
-      ..fields['pinataMetadata'] = jsonEncode({'name': fileName})
-      ..files.add(
-        http.MultipartFile.fromBytes(
-          'file',
-          bytes,
-          filename: fileName,
-        ),
-      );
+    final request =
+        http.MultipartRequest('POST', Uri.parse(config.resolvedEndpoint))
+          ..headers['Authorization'] = 'Bearer $token'
+          ..fields['pinataOptions'] = jsonEncode({'cidVersion': 1})
+          ..fields['pinataMetadata'] = jsonEncode({'name': fileName})
+          ..files.add(
+            http.MultipartFile.fromBytes('file', bytes, filename: fileName),
+          );
 
     final response = await request.send();
     final body = await response.stream.bytesToString();
@@ -257,18 +246,16 @@ class RemoteUploadClient {
       throw ArgumentError('Filebase RPC requires an API token.');
     }
 
-    final resolved = _appendQueryParameters(
-      config.resolvedEndpoint,
-      const {'cid-version': '1'},
-    );
+    final params = <String, String>{'cid-version': '1'};
+    if (config.target == RemoteUploadTarget.kubo) {
+      params['pin'] = 'true';
+    }
+
+    final resolved = _appendQueryParameters(config.resolvedEndpoint, params);
 
     final request = http.MultipartRequest('POST', Uri.parse(resolved))
       ..files.add(
-        http.MultipartFile.fromBytes(
-          'file',
-          bytes,
-          filename: fileName,
-        ),
+        http.MultipartFile.fromBytes('file', bytes, filename: fileName),
       );
 
     final token = config.authToken.trim();
@@ -310,16 +297,10 @@ class RemoteUploadClient {
 
     final response = await http.post(
       Uri.parse(config.resolvedEndpoint),
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Api-Key': apiKey,
-      },
+      headers: {'Content-Type': 'application/json', 'X-Api-Key': apiKey},
       body: jsonEncode({
         'content': base64Encode(bytes),
-        'metadata': {
-          'filename': fileName,
-          'fileType': mimeType,
-        },
+        'metadata': {'filename': fileName, 'fileType': mimeType},
       }),
     );
     if (response.statusCode < 200 || response.statusCode >= 300) {

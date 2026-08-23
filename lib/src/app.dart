@@ -19,16 +19,17 @@ class IpfsPhotoRelayApp extends StatelessWidget {
     const accent = Color(0xFF1F7A8C);
     const highlight = Color(0xFFF4B942);
 
-    final scheme = ColorScheme.fromSeed(
-      seedColor: accent,
-      brightness: Brightness.light,
-    ).copyWith(
-      primary: accent,
-      secondary: highlight,
-      surface: Colors.white,
-      onPrimary: Colors.white,
-      onSurface: ink,
-    );
+    final scheme =
+        ColorScheme.fromSeed(
+          seedColor: accent,
+          brightness: Brightness.light,
+        ).copyWith(
+          primary: accent,
+          secondary: highlight,
+          surface: Colors.white,
+          onPrimary: Colors.white,
+          onSurface: ink,
+        );
 
     return MaterialApp(
       title: 'IPFS Photo Relay',
@@ -321,8 +322,9 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
 
   void _persistCurrentTargetFields() {
     _endpointOverrides[_uploadTarget] = _endpointController.text;
-    _gatewayOverrides[_uploadTarget] =
-        _normalizeGatewayBase(_gatewayController.text);
+    _gatewayOverrides[_uploadTarget] = _normalizeGatewayBase(
+      _gatewayController.text,
+    );
     _authTokenOverrides[_uploadTarget] = _authTokenController.text;
   }
 
@@ -338,8 +340,9 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
       final tokenKey = '$_prefsAuthTokenPrefix${target.name}';
 
       final endpoint = _endpointOverrides[target]?.trim() ?? '';
-      final gateway =
-          _normalizeGatewayBase(_gatewayOverrides[target]?.trim() ?? '');
+      final gateway = _normalizeGatewayBase(
+        _gatewayOverrides[target]?.trim() ?? '',
+      );
       final token = _authTokenOverrides[target]?.trim() ?? '';
 
       if (endpoint.isEmpty) {
@@ -474,9 +477,7 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
     final downloadedImage = _downloadedImage;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('IPFS Photo Relay'),
-      ),
+      appBar: AppBar(title: const Text('IPFS Photo Relay')),
       body: DecoratedBox(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
@@ -594,7 +595,9 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
                                         strokeWidth: 2,
                                       ),
                                     )
-                                  : const Icon(Icons.add_photo_alternate_outlined),
+                                  : const Icon(
+                                      Icons.add_photo_alternate_outlined,
+                                    ),
                               label: const Text('Select Image'),
                             ),
                             if (publishedImage != null) ...[
@@ -618,7 +621,8 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
                                 label: 'Gateway URL',
                                 value: publishedImage.gatewayUrl,
                               ),
-                              if (publishedImage.remoteUploadMessage != null) ...[
+                              if (publishedImage.remoteUploadMessage !=
+                                  null) ...[
                                 const SizedBox(height: 8),
                                 Text(
                                   publishedImage.remoteUploadMessage!,
@@ -631,10 +635,8 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
                                 runSpacing: 12,
                                 children: [
                                   OutlinedButton.icon(
-                                    onPressed: () => _copyText(
-                                      publishedImage.cid,
-                                      'CID',
-                                    ),
+                                    onPressed: () =>
+                                        _copyText(publishedImage.cid, 'CID'),
                                     icon: const Icon(Icons.copy_rounded),
                                     label: const Text('Copy CID'),
                                   ),
@@ -693,9 +695,8 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
                                 hintText: 'bafy... or Qm...',
                                 suffixIcon: IconButton(
                                   tooltip: 'Paste CID',
-                                  onPressed: () => _pasteIntoController(
-                                    _cidController,
-                                  ),
+                                  onPressed: () =>
+                                      _pasteIntoController(_cidController),
                                   icon: const Icon(Icons.content_paste_rounded),
                                 ),
                                 border: OutlineInputBorder(
@@ -769,10 +770,7 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
 }
 
 class _StatusCard extends StatelessWidget {
-  const _StatusCard({
-    required this.statusMessage,
-    required this.errorMessage,
-  });
+  const _StatusCard({required this.statusMessage, required this.errorMessage});
 
   final String statusMessage;
   final String? errorMessage;
@@ -796,7 +794,10 @@ class _StatusCard extends StatelessWidget {
                     color: Color(0xFF153243),
                     shape: BoxShape.circle,
                   ),
-                  child: const Icon(Icons.cloud_upload_outlined, color: Colors.white),
+                  child: const Icon(
+                    Icons.cloud_upload_outlined,
+                    color: Colors.white,
+                  ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
@@ -809,10 +810,7 @@ class _StatusCard extends StatelessWidget {
                           fontWeight: FontWeight.w700,
                         ),
                       ),
-                      Text(
-                        statusMessage,
-                        style: theme.textTheme.bodyMedium,
-                      ),
+                      Text(statusMessage, style: theme.textTheme.bodyMedium),
                     ],
                   ),
                 ),
@@ -854,11 +852,17 @@ class _TipsCard extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 12),
-            const Text('1. Pick one remote backend and configure both its upload endpoint and a gateway that can serve the resulting CID.'),
+            const Text(
+              '1. Pick one remote backend and configure both its upload endpoint and a gateway that can serve the resulting CID.',
+            ),
             const SizedBox(height: 6),
-            const Text('2. Upload the image on Phone A and share only the CID through your short-message channel.'),
+            const Text(
+              '2. Upload the image on Phone A and share only the CID through your short-message channel.',
+            ),
             const SizedBox(height: 6),
-            const Text('3. On Phone B, use the same backend or another reachable gateway to fetch the CID and share the downloaded file into the device gallery or files app.'),
+            const Text(
+              '3. On Phone B, use the same backend or another reachable gateway to fetch the CID and share the downloaded file into the device gallery or files app.',
+            ),
           ],
         ),
       ),
@@ -935,10 +939,7 @@ class _MetaRow extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 4),
-        SelectableText(
-          value,
-          style: theme.textTheme.bodyLarge,
-        ),
+        SelectableText(value, style: theme.textTheme.bodyLarge),
       ],
     );
   }

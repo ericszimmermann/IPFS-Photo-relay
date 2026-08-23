@@ -120,11 +120,10 @@ class IpfsTransferService {
       cid: cid,
     );
 
-    final mimeType =
-        remoteFile.mimeType.isEmpty
-            ? lookupMimeType(remoteFile.fileName, headerBytes: remoteFile.bytes) ??
-                'application/octet-stream'
-            : remoteFile.mimeType;
+    final mimeType = remoteFile.mimeType.isEmpty
+        ? lookupMimeType(remoteFile.fileName, headerBytes: remoteFile.bytes) ??
+              'application/octet-stream'
+        : remoteFile.mimeType;
 
     var fileName = _sanitizeFileName(remoteFile.fileName);
     if (!_hasExtension(fileName)) {
@@ -144,19 +143,13 @@ class IpfsTransferService {
 
   Future<void> shareCid(String cid) {
     return SharePlus.instance.share(
-      ShareParams(
-        text: cid,
-        subject: 'IPFS content identifier',
-      ),
+      ShareParams(text: cid, subject: 'IPFS content identifier'),
     );
   }
 
   Future<void> shareGatewayUrl(String gatewayUrl) {
     return SharePlus.instance.share(
-      ShareParams(
-        text: gatewayUrl,
-        subject: 'IPFS gateway URL',
-      ),
+      ShareParams(text: gatewayUrl, subject: 'IPFS gateway URL'),
     );
   }
 

@@ -15,15 +15,10 @@ void main() {
     expect(find.text('Download From CID'), findsOneWidget);
   });
 
-  test('configures IPFS.NINJA defaults', () {
-    expect(RemoteUploadTarget.ipfsNinja.label, 'IPFS.NINJA');
+  test('uses the supported remote targets only', () {
     expect(
-      RemoteUploadTarget.ipfsNinja.defaultUploadEndpoint,
-      'https://api.ipfs.ninja/upload/new',
-    );
-    expect(
-      RemoteUploadTarget.ipfsNinja.defaultGatewayBase,
-      'https://ipfs.ninja/ipfs/',
+      RemoteUploadTarget.values.map((target) => target.name),
+      ['pinata', 'filebase', 'kubo'],
     );
   });
 }

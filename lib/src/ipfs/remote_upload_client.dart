@@ -33,7 +33,7 @@ String normalizeGatewayBase(String value) {
   return normalizedValue;
 }
 
-enum RemoteUploadTarget { pinata, filebase, ipfsNinja, kubo }
+enum RemoteUploadTarget { pinata, filebase, kubo }
 
 extension RemoteUploadTargetLabel on RemoteUploadTarget {
   String get label {
@@ -42,8 +42,6 @@ extension RemoteUploadTargetLabel on RemoteUploadTarget {
         return 'Pinata';
       case RemoteUploadTarget.filebase:
         return 'Filebase RPC';
-      case RemoteUploadTarget.ipfsNinja:
-        return 'IPFS.NINJA';
       case RemoteUploadTarget.kubo:
         return 'Kubo RPC';
     }
@@ -55,8 +53,6 @@ extension RemoteUploadTargetLabel on RemoteUploadTarget {
         return 'https://api.pinata.cloud/pinning/pinFileToIPFS';
       case RemoteUploadTarget.filebase:
         return 'https://rpc.filebase.io/api/v0/add';
-      case RemoteUploadTarget.ipfsNinja:
-        return 'https://api.ipfs.ninja/upload/new';
       case RemoteUploadTarget.kubo:
         return 'http://127.0.0.1:5001/api/v0/add';
     }
@@ -68,8 +64,6 @@ extension RemoteUploadTargetLabel on RemoteUploadTarget {
         return 'https://gateway.pinata.cloud/ipfs/';
       case RemoteUploadTarget.filebase:
         return 'https://ipfs.filebase.io/ipfs/';
-      case RemoteUploadTarget.ipfsNinja:
-        return 'https://ipfs.ninja/ipfs/';
       case RemoteUploadTarget.kubo:
         return 'http://127.0.0.1:8080/ipfs/';
     }
@@ -147,13 +141,6 @@ class RemoteUploadClient {
       case RemoteUploadTarget.filebase:
       case RemoteUploadTarget.kubo:
         return _uploadToKuboCompatible(
-          config: config,
-          bytes: bytes,
-          fileName: fileName,
-          mimeType: mimeType,
-        );
-      case RemoteUploadTarget.ipfsNinja:
-        return _uploadToIpfsNinja(
           config: config,
           bytes: bytes,
           fileName: fileName,
@@ -324,45 +311,6 @@ class RemoteUploadClient {
         'Kubo MFS import failed (${response.statusCode}): ${response.body}',
       );
     }
-  }
-
-  Future<RemoteUploadResult> _uploadToIpfsNinja({
-    required RemoteUploadConfig config,
-    required Uint8List bytes,
-    required String fileName,
-    required String mimeType,
-  }) async {
-    final apiKey = config.authToken.trim();
-    if (apiKey.isEmpty) {
-      throw ArgumentError('IPFS.NINJA requires an API key.');
-    }
-
-    final response = await http.post(
-      Uri.parse(config.resolvedEndpoint),
-      headers: {'Content-Type': 'application/json', 'X-Api-Key': apiKey},
-      body: jsonEncode({
-        'content': base64Encode(bytes),
-        'metadata': {'filename': fileName, 'fileType': mimeType},
-      }),
-    );
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw Exception(
-        'IPFS.NINJA upload failed (${response.statusCode}): ${response.body}',
-      );
-    }
-
-    final data = jsonDecode(response.body) as Map<String, dynamic>;
-    final cid = data['cid'] as String?;
-    if (cid == null || cid.isEmpty) {
-      throw Exception('IPFS.NINJA did not return an IPFS CID.');
-    }
-
-    return RemoteUploadResult(
-      cid: cid,
-      target: config.target,
-      endpoint: config.resolvedEndpoint,
-      gatewayUrl: _buildGatewayUrl(config.resolvedGatewayBase, cid),
-    );
   }
 
   String? _extractKuboHash(String body) {

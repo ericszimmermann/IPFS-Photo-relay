@@ -276,12 +276,54 @@ class RemoteUploadClient {
       throw Exception('${config.target.label} did not return an IPFS CID.');
     }
 
+    if (config.target == RemoteUploadTarget.kubo) {
+      await _copyKuboFileToMfs(
+        endpoint: config.resolvedEndpoint,
+        cid: cid,
+        fileName: fileName,
+        authorization: token.isEmpty ? null : 'Bearer $token',
+      );
+    }
+
     return RemoteUploadResult(
       cid: cid,
       target: config.target,
       endpoint: config.resolvedEndpoint,
       gatewayUrl: _buildGatewayUrl(config.resolvedGatewayBase, cid),
     );
+  }
+
+  Future<void> _copyKuboFileToMfs({
+    required String endpoint,
+    required String cid,
+    required String fileName,
+    required String? authorization,
+  }) async {
+    final uploadUri = Uri.parse(endpoint);
+    final copyPath = uploadUri.path.replaceFirst(
+      RegExp(r'/add/?$'),
+      '/files/cp',
+    );
+    if (copyPath == uploadUri.path) {
+      throw ArgumentError('Kubo upload endpoint must end with /add.');
+    }
+
+    final mfsPath = '/uploads/$cid-$fileName';
+    final copyUri = uploadUri.replace(
+      path: copyPath,
+      query:
+          'arg=${Uri.encodeQueryComponent('/ipfs/$cid')}'
+          '&arg=${Uri.encodeQueryComponent(mfsPath)}&parents=true',
+    );
+    final response = await http.post(
+      copyUri,
+      headers: authorization == null ? null : {'Authorization': authorization},
+    );
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception(
+        'Kubo MFS import failed (${response.statusCode}): ${response.body}',
+      );
+    }
   }
 
   Future<RemoteUploadResult> _uploadToIpfsNinja({

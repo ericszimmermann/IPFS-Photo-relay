@@ -41,9 +41,9 @@ extension RemoteUploadTargetLabel on RemoteUploadTarget {
       case RemoteUploadTarget.pinata:
         return 'Pinata';
       case RemoteUploadTarget.filebase:
-        return 'Filebase RPC';
+        return 'Filebase';
       case RemoteUploadTarget.kubo:
-        return 'Kubo RPC';
+        return 'Kubo';
     }
   }
 

@@ -969,7 +969,7 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
                             StatefulBuilder(builder: (context, setState) {
                               final options = <Map<String, String>>[];
                               // Add public ipfs.io as an extra option
-                              options.add({'label': 'IPFS.io', 'value': _normalizeGatewayBase('https://ipfs.io/ipfs/')});
+                              options.add({'label': 'ipfs.io Public', 'value': _normalizeGatewayBase('https://ipfs.io/ipfs/')});
 
                               // Add configured provider gateways if they are non-empty and different from the default
                               for (final p in _providerList) {
@@ -979,9 +979,9 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
                                 }
                               }
 
-                              // Add the three/default gateways
+                              // Add the three/default gateways (mark as Public)
                               options.addAll(RemoteUploadTarget.values.map((t) => {
-                                    'label': t.label,
+                                    'label': '${t.label} Public',
                                     'value': _normalizeGatewayBase(t.defaultGatewayBase),
                                   }));
 

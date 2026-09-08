@@ -148,6 +148,8 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
   PublishedImage? _publishedImage;
   DownloadedImage? _downloadedImage;
   RemoteUploadTarget _uploadTarget = RemoteUploadTarget.pinata;
+  // Selected gateway to use for downloads (separate from upload gateway)
+  String? _selectedDownloadGateway;
 
   bool _isPublishing = false;
   bool _isDownloading = false;
@@ -161,6 +163,7 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
     super.initState();
     _buildProviderList();
     _loadTargetFields(_uploadTarget);
+    _selectedDownloadGateway = _gatewayController.text;
     unawaited(_restoreCustomProviders());
     unawaited(_restorePersistedSettings());
   }
@@ -230,9 +233,29 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
     });
 
     try {
+      final gatewayBase = (_selectedDownloadGateway != null && _selectedDownloadGateway!.trim().isNotEmpty)
+          ? _selectedDownloadGateway!.trim()
+          : _gatewayController.text.trim();
+
+      // Find matching custom provider to supply auth token if available
+      String authToken = '';
+      for (final p in _providerList) {
+        if (p.gatewayBase.trim().isNotEmpty && _normalizeGatewayBase(p.gatewayBase) == _normalizeGatewayBase(gatewayBase)) {
+          authToken = p.authToken;
+          break;
+        }
+      }
+
+      final cfg = RemoteUploadConfig(
+        target: _uploadTarget,
+        endpoint: '',
+        gatewayBase: gatewayBase,
+        authToken: authToken,
+      );
+
       final downloadedImage = await _service.downloadByCid(
         rawCid: _cidController.text,
-        remoteUploadConfig: _currentRemoteUploadConfig(),
+        remoteUploadConfig: cfg,
       );
       if (!mounted) {
         return;
@@ -623,6 +646,7 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
         return StatefulBuilder(builder: (context, setState) {
           var previousDefaultEndpoint = selectedTarget.defaultUploadEndpoint;
           var previousDefaultGateway = _normalizeGatewayBase(selectedTarget.defaultGatewayBase);
+          var previousDefaultName = selectedTarget.label;
 
           return AlertDialog(
             title: Text(existing == null ? 'Add provider' : 'Edit provider'),
@@ -654,10 +678,17 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
                       if (existing == null || gatewayCtrl.text.trim().isEmpty || gatewayCtrl.text.trim() == previousDefaultGateway) {
                         gatewayCtrl.text = newDefaultGateway;
                       }
+                      // If the name is still the previous default (or was left blank/empty for new entries), update it too
+                      final newDefaultName = t.label;
+                      final currentName = nameCtrl.text.trim();
+                      if (existing == null || currentName.isEmpty || currentName == previousDefaultName || currentName == '$previousDefaultName (custom)') {
+                        nameCtrl.text = newDefaultName;
+                      }
 
                       selectedTarget = t;
                       previousDefaultEndpoint = newDefaultEndpoint;
                       previousDefaultGateway = newDefaultGateway;
+                      previousDefaultName = newDefaultName;
                       setState(() {});
                     },
                   ),
@@ -712,16 +743,7 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
 
   
 
-  String get _uploadDescription {
-    switch (_uploadTarget) {
-      case RemoteUploadTarget.pinata:
-        return 'Upload the file directly to Pinata and fetch it again through a Pinata gateway.';
-      case RemoteUploadTarget.filebase:
-        return 'Upload through Filebase\'s Kubo-compatible RPC API and retrieve through the Filebase IPFS gateway.';
-      case RemoteUploadTarget.kubo:
-        return 'Upload to your own Kubo API and fetch from your chosen gateway, including a VPN-exposed node.';
-    }
-  }
+  // _uploadDescription removed (unused)
 
   @override
   Widget build(BuildContext context) {
@@ -756,14 +778,16 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
                       const SizedBox(height: 16),
                       _TipsCard(theme: theme),
                       const SizedBox(height: 16),
+                      const SizedBox(height: 0),
                       _SectionCard(
-                        eyebrow: 'Remote Backend',
-                        title: 'Choose where the file will live',
+                        eyebrow: 'Send',
+                        title: 'Upload the image and share the CID',
                         description:
-                            'This branch is remote-only. The app uploads straight to Pinata, Filebase RPC, or your own Kubo API and later fetches the CID back through a gateway.',
+                            'Publishing uploads the file to the configured remote backend and returns the shareable CID. This is the path to use when you do not want the app to run a local IPFS node.',
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
+                            // Provider selection moved into Send section: render here before upload button
                             Row(
                               children: [
                                 Expanded(
@@ -820,26 +844,7 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
                                 ),
                               ],
                             ),
-                            const SizedBox(height: 8),
-                            const SizedBox(height: 4),
                             const SizedBox(height: 12),
-                            Text(
-                              _uploadDescription,
-                              style: theme.textTheme.bodyMedium,
-                            ),
-                            const SizedBox(height: 12),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      _SectionCard(
-                        eyebrow: 'Send',
-                        title: 'Upload the image and share the CID',
-                        description:
-                            'Publishing uploads the file to the configured remote backend and returns the shareable CID. This is the path to use when you do not want the app to run a local IPFS node.',
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
                             FilledButton.icon(
                               onPressed: _isPublishing ? null : _publishImage,
                               icon: _isPublishing
@@ -959,6 +964,48 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
                                 ),
                               ),
                             ),
+                            const SizedBox(height: 8),
+                            // Download gateway selector: default gateways + configured provider gateways (non-default)
+                            StatefulBuilder(builder: (context, setState) {
+                              final options = <Map<String, String>>[];
+                              // Add public ipfs.io as an extra option
+                              options.add({'label': 'IPFS.io', 'value': _normalizeGatewayBase('https://ipfs.io/ipfs/')});
+
+                              // Add configured provider gateways if they are non-empty and different from the default
+                              for (final p in _providerList) {
+                                final pg = p.gatewayBase.trim();
+                                if (pg.isNotEmpty && _normalizeGatewayBase(pg) != _normalizeGatewayBase(p.target.defaultGatewayBase)) {
+                                  options.add({'label': p.name, 'value': _normalizeGatewayBase(pg)});
+                                }
+                              }
+
+                              // Add the three/default gateways
+                              options.addAll(RemoteUploadTarget.values.map((t) => {
+                                    'label': t.label,
+                                    'value': _normalizeGatewayBase(t.defaultGatewayBase),
+                                  }));
+
+                              final currentValue = (_selectedDownloadGateway != null && _selectedDownloadGateway!.isNotEmpty)
+                                  ? _normalizeGatewayBase(_selectedDownloadGateway!)
+                                  : _normalizeGatewayBase(_gatewayController.text);
+
+                              return DropdownButtonFormField<String>(
+                                initialValue: options.any((o) => o['value'] == currentValue) ? currentValue : options.first['value'],
+                                isExpanded: true,
+                                decoration: InputDecoration(
+                                  labelText: 'Gateway to fetch from',
+                                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(18)),
+                                ),
+                                items: options
+                                    .map((o) => DropdownMenuItem<String>(value: o['value'], child: Text(o['label']!)))
+                                    .toList(),
+                                onChanged: (v) {
+                                  setState(() {
+                                    _selectedDownloadGateway = v;
+                                  });
+                                },
+                              );
+                            }),
                             const SizedBox(height: 12),
                             FilledButton.icon(
                               onPressed: _isDownloading ? null : _downloadImage,

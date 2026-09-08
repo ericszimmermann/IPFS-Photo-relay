@@ -362,15 +362,6 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
     return normalizeGatewayBase(value);
   }
 
-  void _applyGatewayValidation(String value) {
-    final normalizedValue = _normalizeGatewayBase(value);
-    if (normalizedValue != value) {
-      _gatewayController.value = TextEditingValue(
-        text: normalizedValue,
-        selection: TextSelection.collapsed(offset: normalizedValue.length),
-      );
-    }
-  }
 
   void _persistCurrentTargetFields() {
     final selected = _selectedProviderIndex >= 0 ? _providerList[_selectedProviderIndex] : null;
@@ -542,15 +533,6 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
     );
     _authTokenController.text = _authTokenOverrides[target] ?? '';
   }
-
-  void _onUploadTargetChanged(RemoteUploadTarget target) {
-    // legacy path: switch to builtin provider matching this target.
-    final idx = _providerList.indexWhere((p) => p.isBuiltin && p.target == target);
-    if (idx >= 0) {
-      _onSelectedProviderIndexChanged(idx);
-    }
-  }
-
   void _onSelectedProviderIndexChanged(int index) {
     _persistCurrentTargetFields();
     setState(() {
@@ -571,43 +553,6 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
       _gatewayController.text = entry.gatewayBase;
       _authTokenController.text = entry.authToken;
     }
-  }
-
-  void _onAddProviderPressed() async {
-    final result = await _showProviderEditorDialog(context);
-    if (result is _ProviderEntry) {
-      setState(() {
-        _providerList.add(result);
-        _selectedProviderIndex = _providerList.length - 1;
-        _uploadTarget = result.target;
-        _applyProviderToControllers(result);
-      });
-      unawaited(_persistSettings());
-    }
-  }
-
-  void _onAddFromTemplate(RemoteUploadTarget target) async {
-    final result = await _showProviderEditorDialog(context, initialTarget: target);
-    if (result is _ProviderEntry) {
-      setState(() {
-        _providerList.add(result);
-        _selectedProviderIndex = _providerList.length - 1;
-        _uploadTarget = result.target;
-        _applyProviderToControllers(result);
-      });
-      unawaited(_persistSettings());
-    }
-  }
-
-  void _useBuiltin(RemoteUploadTarget target) {
-    setState(() {
-      _selectedProviderIndex = -1;
-      _uploadTarget = target;
-      _endpointController.text = target.defaultUploadEndpoint;
-      _gatewayController.text = _normalizeGatewayBase(target.defaultGatewayBase);
-      _authTokenController.text = '';
-    });
-    unawaited(_persistSettings());
   }
 
   void _onEditProviderPressed() async {
@@ -655,38 +600,7 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
     }
   }
 
-  void _onDeleteProviderPressed() async {
-    final current = _providerList[_selectedProviderIndex];
-    if (current.isBuiltin) return;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Delete provider'),
-        content: Text('Delete "${current.name}"? This cannot be undone.'),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
-          TextButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Delete', style: TextStyle(color: Colors.red))),
-        ],
-      ),
-    );
-    if (confirmed == true) {
-      setState(() {
-        _providerList.removeAt(_selectedProviderIndex);
-        if (_providerList.isEmpty) {
-          _selectedProviderIndex = -1;
-          _uploadTarget = RemoteUploadTarget.pinata;
-          _endpointController.text = _uploadTarget.defaultUploadEndpoint;
-          _gatewayController.text = _normalizeGatewayBase(_uploadTarget.defaultGatewayBase);
-          _authTokenController.text = '';
-        } else {
-          _selectedProviderIndex = 0;
-          _uploadTarget = _providerList[_selectedProviderIndex].target;
-          _applyProviderToControllers(_providerList[_selectedProviderIndex]);
-        }
-      });
-      unawaited(_persistSettings());
-    }
-  }
+
 
   Future<dynamic> _showProviderEditorDialog(BuildContext ctx, { _ProviderEntry? existing, RemoteUploadTarget? initialTarget, }) {
     final nameCtrl = TextEditingController(text: existing?.name ?? '');
@@ -722,7 +636,7 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
                   ),
                   const SizedBox(height: 8),
                   DropdownButtonFormField<RemoteUploadTarget>(
-                    value: selectedTarget,
+                    initialValue: selectedTarget,
                     decoration: const InputDecoration(labelText: 'Provider type'),
                     items: RemoteUploadTarget.values
                         .map((t) => DropdownMenuItem(value: t, child: Text(t.label)))
@@ -795,29 +709,7 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
     );
   }
 
-  void _onEndpointChanged(String _) {
-    unawaited(_persistSettings());
-  }
-
-  void _onGatewayChanged(String value) {
-    _applyGatewayValidation(value);
-    unawaited(_persistSettings());
-  }
-
-  void _onAuthTokenChanged(String _) {
-    unawaited(_persistSettings());
-  }
-
-  String get _authTokenLabel {
-    switch (_uploadTarget) {
-      case RemoteUploadTarget.pinata:
-        return 'Pinata JWT';
-      case RemoteUploadTarget.filebase:
-        return 'Filebase API token';
-      case RemoteUploadTarget.kubo:
-        return 'Bearer token (optional)';
-    }
-  }
+  
 
   String get _uploadDescription {
     switch (_uploadTarget) {
@@ -875,7 +767,7 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
                               children: [
                                 Expanded(
                                   child: DropdownButtonFormField<int>(
-                                    value: _selectedProviderIndex >= 0 ? _selectedProviderIndex : null,
+                                    initialValue: _selectedProviderIndex >= 0 ? _selectedProviderIndex : null,
                                     decoration: InputDecoration(
                                       labelText: 'Upload path',
                                       border: OutlineInputBorder(

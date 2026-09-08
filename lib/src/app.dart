@@ -637,6 +637,7 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
                   const SizedBox(height: 8),
                   DropdownButtonFormField<RemoteUploadTarget>(
                     initialValue: selectedTarget,
+                    isExpanded: true,
                     decoration: const InputDecoration(labelText: 'Provider type'),
                     items: RemoteUploadTarget.values
                         .map((t) => DropdownMenuItem(value: t, child: Text(t.label)))
@@ -768,6 +769,7 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
                                 Expanded(
                                   child: DropdownButtonFormField<int>(
                                     initialValue: _selectedProviderIndex >= 0 ? _selectedProviderIndex : null,
+                                    isExpanded: true,
                                     decoration: InputDecoration(
                                       labelText: 'Upload path',
                                       border: OutlineInputBorder(

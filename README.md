@@ -62,6 +62,13 @@ Install it on two phones, then:
 - Gateway default: `http://127.0.0.1:8080/ipfs/`
 - Auth: optional bearer token
 - Good fit for a Kubo node behind VPN, reverse proxy, or another controlled network path
+- Kubo's default gateway address listens only on loopback, so other devices cannot reach it. On the Kubo host, configure the gateway to bind to an address reachable by your clients, then restart Kubo:
+
+  ```bash
+  ipfs config Addresses.Gateway /ip4/<ip>/tcp/8080
+  ```
+
+  Replace `<ip>` with the Kubo host's reachable IP address. Keep the Kubo API on port `5001` restricted; clients only need gateway access on port `8080`.
 
 ## Notes
 

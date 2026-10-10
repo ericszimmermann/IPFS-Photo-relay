@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -144,6 +145,7 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
   late List<_ProviderEntry> _providerList;
   // -1 means no custom provider selected (use builtin/legacy selection)
   int _selectedProviderIndex = -1;
+  bool _settingsRestored = false;
 
   PublishedImage? _publishedImage;
   DownloadedImage? _downloadedImage;
@@ -153,6 +155,11 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
 
   bool _isPublishing = false;
   bool _isDownloading = false;
+
+    bool get _isDesktop =>
+      !kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.linux ||
+        defaultTargetPlatform == TargetPlatform.windows);
 
   String _statusMessage =
       'Remote mode active. Upload to Pinata, Filebase RPC, or a Kubo node.';
@@ -164,8 +171,7 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
     _buildProviderList();
     _loadTargetFields(_uploadTarget);
     _selectedDownloadGateway = _gatewayController.text;
-    unawaited(_restoreCustomProviders());
-    unawaited(_restorePersistedSettings());
+    unawaited(_restoreSettings());
   }
 
   @override
@@ -183,7 +189,7 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
     setState(() {
       _isPublishing = true;
       _errorMessage = null;
-      _statusMessage = 'Picking an image and uploading it to remote IPFS...';
+      _statusMessage = 'Picking a file and uploading it to remote IPFS...';
     });
 
     try {
@@ -304,29 +310,54 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
     }
   }
 
-  Future<void> _sharePublishedGatewayUrl() async {
+  Future<void> _openOrSharePublishedGatewayUrl() async {
     final gatewayUrl = _publishedImage?.gatewayUrl;
     if (gatewayUrl == null) {
       return;
     }
 
     try {
-      await _service.shareGatewayUrl(gatewayUrl);
+      if (_isDesktop) {
+        await _service.openGatewayUrl(gatewayUrl);
+      } else {
+        await _service.shareGatewayUrl(gatewayUrl);
+      }
       if (!mounted) {
         return;
       }
-      _showSnack('Gateway URL shared.');
+      _showSnack(
+        _isDesktop
+            ? 'Gateway URL opened in browser.'
+            : 'Gateway URL shared.',
+      );
     } catch (error) {
       if (!mounted) {
         return;
       }
-      _showSnack('Sharing failed: $error');
+      _showSnack(
+        '${_isDesktop ? 'Opening URL' : 'Sharing'} failed: $error',
+      );
     }
   }
 
-  Future<void> _shareDownloadedFile() async {
+  Future<void> _receiveDownloadedFile() async {
     final image = _downloadedImage;
     if (image == null) {
+      return;
+    }
+
+    if (_isDesktop) {
+      try {
+        final savedPath = await _service.saveDownloadedFile(image);
+        if (!mounted || savedPath == null) {
+          return;
+        }
+        _showSnack('File saved to $savedPath');
+      } catch (error) {
+        if (mounted) {
+          _showSnack('Saving failed: $error');
+        }
+      }
       return;
     }
 
@@ -403,6 +434,10 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
   }
 
   Future<void> _persistSettings() async {
+    if (!_settingsRestored) {
+      return;
+    }
+
     _persistCurrentTargetFields();
 
     final prefs = await _prefsFuture;
@@ -461,6 +496,14 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
     return null;
   }
 
+  Future<void> _restoreSettings() async {
+    await _restoreCustomProviders();
+    await _restorePersistedSettings();
+    if (mounted) {
+      _settingsRestored = true;
+    }
+  }
+
   Future<void> _restorePersistedSettings() async {
     final prefs = await _prefsFuture;
 
@@ -513,7 +556,11 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
         }
       }
 
-      _loadTargetFields(_uploadTarget);
+      if (_selectedProviderIndex >= 0) {
+        _applyProviderToControllers(_providerList[_selectedProviderIndex]);
+      } else {
+        _loadTargetFields(_uploadTarget);
+      }
     });
   }
 
@@ -781,7 +828,7 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
                       const SizedBox(height: 0),
                       _SectionCard(
                         eyebrow: 'Send',
-                        title: 'Upload the image and share the CID',
+                        title: 'Upload a file and share the CID',
                         description:
                             'Publishing uploads the file to the configured remote backend and returns the shareable CID. This is the path to use when you do not want the app to run a local IPFS node.',
                         child: Column(
@@ -858,7 +905,7 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
                                   : const Icon(
                                       Icons.add_photo_alternate_outlined,
                                     ),
-                              label: const Text('Select Image'),
+                              label: const Text('Select File'),
                             ),
                             if (publishedImage != null) ...[
                               const SizedBox(height: 16),
@@ -914,9 +961,18 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
                                     label: const Text('Copy Gateway URL'),
                                   ),
                                   FilledButton.tonalIcon(
-                                    onPressed: _sharePublishedGatewayUrl,
-                                    icon: const Icon(Icons.ios_share_rounded),
-                                    label: const Text('Share Gateway URL'),
+                                    onPressed:
+                                        _openOrSharePublishedGatewayUrl,
+                                    icon: Icon(
+                                      _isDesktop
+                                          ? Icons.open_in_browser_rounded
+                                          : Icons.ios_share_rounded,
+                                    ),
+                                    label: Text(
+                                      _isDesktop
+                                          ? 'Open Gateway URL'
+                                          : 'Share Gateway URL',
+                                    ),
                                   ),
                                 ],
                               ),
@@ -1038,9 +1094,17 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
                               ),
                               const SizedBox(height: 12),
                               FilledButton.tonalIcon(
-                                onPressed: _shareDownloadedFile,
-                                icon: const Icon(Icons.ios_share_rounded),
-                                label: const Text('Share Downloaded File'),
+                                onPressed: _receiveDownloadedFile,
+                                icon: Icon(
+                                  _isDesktop
+                                      ? Icons.save_alt_rounded
+                                      : Icons.ios_share_rounded,
+                                ),
+                                label: Text(
+                                  _isDesktop
+                                      ? 'Save Downloaded File'
+                                      : 'Share Downloaded File',
+                                ),
                               ),
                               if (downloadedImage.isImage) ...[
                                 const SizedBox(height: 16),
@@ -1159,7 +1223,7 @@ class _TipsCard extends StatelessWidget {
             ),
             const SizedBox(height: 6),
             const Text(
-              '2. Upload the image on Phone A and share only the CID through your short-message channel.',
+              '2. Upload the file on Phone A and share only the CID through your short-message channel.',
             ),
             const SizedBox(height: 6),
             const Text(

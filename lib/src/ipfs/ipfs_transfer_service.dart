@@ -5,6 +5,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:mime/mime.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'remote_upload_client.dart';
 
@@ -62,7 +63,7 @@ class IpfsTransferService {
     required RemoteUploadConfig remoteUploadConfig,
   }) async {
     final result = await FilePicker.pickFiles(
-      type: FileType.image,
+      type: FileType.any,
       allowMultiple: false,
       withData: true,
     );
@@ -153,6 +154,16 @@ class IpfsTransferService {
     );
   }
 
+  Future<void> openGatewayUrl(String gatewayUrl) async {
+    final opened = await launchUrl(
+      Uri.parse(gatewayUrl),
+      mode: LaunchMode.externalApplication,
+    );
+    if (!opened) {
+      throw Exception('Could not open the gateway URL in a browser.');
+    }
+  }
+
   Future<void> shareDownloadedFile(DownloadedImage image) {
     return SharePlus.instance.share(
       ShareParams(
@@ -166,6 +177,14 @@ class IpfsTransferService {
           ),
         ],
       ),
+    );
+  }
+
+  Future<String?> saveDownloadedFile(DownloadedImage image) {
+    return FilePicker.saveFile(
+      dialogTitle: 'Save downloaded file',
+      fileName: image.fileName,
+      bytes: image.bytes,
     );
   }
 
@@ -231,19 +250,8 @@ class IpfsTransferService {
   }
 
   String _extensionForMime(String mimeType) {
-    switch (mimeType) {
-      case 'image/jpeg':
-        return '.jpg';
-      case 'image/png':
-        return '.png';
-      case 'image/gif':
-        return '.gif';
-      case 'image/webp':
-        return '.webp';
-      case 'image/heic':
-        return '.heic';
-      default:
-        return '';
-    }
+    final mimeTypeWithoutParameters = mimeType.split(';').first.trim();
+    final extension = extensionFromMime(mimeTypeWithoutParameters);
+    return '.${extension ?? 'bin'}';
   }
 }

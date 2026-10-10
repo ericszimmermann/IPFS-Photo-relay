@@ -28,15 +28,16 @@ class _ProviderEntry {
   final bool isBuiltin;
 
   Map<String, dynamic> toJson() => {
-        'name': name,
-        'target': target.name,
-        'endpoint': endpoint,
-        'gatewayBase': gatewayBase,
-        'authToken': authToken,
-      };
+    'name': name,
+    'target': target.name,
+    'endpoint': endpoint,
+    'gatewayBase': gatewayBase,
+    'authToken': authToken,
+  };
 
   static _ProviderEntry fromJson(Map<String, dynamic> json) {
-    final targetName = json['target'] as String? ?? RemoteUploadTarget.pinata.name;
+    final targetName =
+        json['target'] as String? ?? RemoteUploadTarget.pinata.name;
     final target = RemoteUploadTarget.values.firstWhere(
       (t) => t.name == targetName,
       orElse: () => RemoteUploadTarget.pinata,
@@ -150,16 +151,17 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
   PublishedImage? _publishedImage;
   DownloadedImage? _downloadedImage;
   RemoteUploadTarget _uploadTarget = RemoteUploadTarget.pinata;
+  String? _selectedPublishedGatewayBase;
   // Selected gateway to use for downloads (separate from upload gateway)
   String? _selectedDownloadGateway;
 
   bool _isPublishing = false;
   bool _isDownloading = false;
 
-    bool get _isDesktop =>
+  bool get _isDesktop =>
       !kIsWeb &&
       (defaultTargetPlatform == TargetPlatform.linux ||
-        defaultTargetPlatform == TargetPlatform.windows);
+          defaultTargetPlatform == TargetPlatform.windows);
 
   String _statusMessage =
       'Remote mode active. Upload to Pinata, Filebase RPC, or a Kubo node.';
@@ -209,6 +211,7 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
 
       setState(() {
         _publishedImage = publishedImage;
+        _selectedPublishedGatewayBase = null;
         _cidController.text = publishedImage.cid;
         _statusMessage =
             'Uploaded ${publishedImage.fileName} to ${publishedImage.remoteTarget.label}.';
@@ -239,14 +242,18 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
     });
 
     try {
-      final gatewayBase = (_selectedDownloadGateway != null && _selectedDownloadGateway!.trim().isNotEmpty)
+      final gatewayBase =
+          (_selectedDownloadGateway != null &&
+              _selectedDownloadGateway!.trim().isNotEmpty)
           ? _selectedDownloadGateway!.trim()
           : _gatewayController.text.trim();
 
       // Find matching custom provider to supply auth token if available
       String authToken = '';
       for (final p in _providerList) {
-        if (p.gatewayBase.trim().isNotEmpty && _normalizeGatewayBase(p.gatewayBase) == _normalizeGatewayBase(gatewayBase)) {
+        if (p.gatewayBase.trim().isNotEmpty &&
+            _normalizeGatewayBase(p.gatewayBase) ==
+                _normalizeGatewayBase(gatewayBase)) {
           authToken = p.authToken;
           break;
         }
@@ -311,10 +318,11 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
   }
 
   Future<void> _openOrSharePublishedGatewayUrl() async {
-    final gatewayUrl = _publishedImage?.gatewayUrl;
-    if (gatewayUrl == null) {
+    final publishedImage = _publishedImage;
+    if (publishedImage == null) {
       return;
     }
+    final gatewayUrl = _publishedGatewayUrl(publishedImage);
 
     try {
       if (_isDesktop) {
@@ -326,17 +334,13 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
         return;
       }
       _showSnack(
-        _isDesktop
-            ? 'Gateway URL opened in browser.'
-            : 'Gateway URL shared.',
+        _isDesktop ? 'Gateway URL opened in browser.' : 'Gateway URL shared.',
       );
     } catch (error) {
       if (!mounted) {
         return;
       }
-      _showSnack(
-        '${_isDesktop ? 'Opening URL' : 'Sharing'} failed: $error',
-      );
+      _showSnack('${_isDesktop ? 'Opening URL' : 'Sharing'} failed: $error');
     }
   }
 
@@ -416,9 +420,75 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
     return normalizeGatewayBase(value);
   }
 
+  List<Map<String, String>> _gatewayOptions({
+    bool includeConfiguredGateway = false,
+  }) {
+    final options = <Map<String, String>>[];
+    for (final provider in _providerList) {
+      final gateway = provider.gatewayBase.trim();
+      if (gateway.isNotEmpty &&
+          _normalizeGatewayBase(gateway) !=
+              _normalizeGatewayBase(provider.target.defaultGatewayBase)) {
+        options.add({
+          'label': provider.name,
+          'value': _normalizeGatewayBase(gateway),
+        });
+      }
+    }
+
+    options.addAll(
+      RemoteUploadTarget.values
+          .where((target) => target != RemoteUploadTarget.kubo)
+          .map(
+            (target) => {
+              'label': '${target.label} Public',
+              'value': _normalizeGatewayBase(target.defaultGatewayBase),
+            },
+          ),
+    );
+
+    if (includeConfiguredGateway) {
+      final configuredGateway = _normalizeGatewayBase(_gatewayController.text);
+      if (configuredGateway.isNotEmpty &&
+          !options.any((option) => option['value'] == configuredGateway)) {
+        options.insert(0, {
+          'label': 'Kubo configured',
+          'value': configuredGateway,
+        });
+      }
+    }
+
+    return options;
+  }
+
+  String _defaultPublishedGatewayBase() {
+    if (_uploadTarget == RemoteUploadTarget.kubo) {
+      final configuredGateway = _gatewayController.text.trim();
+      return _normalizeGatewayBase(
+        configuredGateway.isEmpty
+            ? _uploadTarget.defaultGatewayBase
+            : configuredGateway,
+      );
+    }
+    return _normalizeGatewayBase(_uploadTarget.defaultGatewayBase);
+  }
+
+  String _publishedGatewayUrl(PublishedImage image) {
+    final gatewayBase =
+        _selectedPublishedGatewayBase ?? _defaultPublishedGatewayBase();
+    if (gatewayBase.isEmpty) {
+      return image.gatewayUrl;
+    }
+    if (gatewayBase.contains('{cid}')) {
+      return gatewayBase.replaceAll('{cid}', image.cid);
+    }
+    return '${gatewayBase.endsWith('/') ? gatewayBase : '$gatewayBase/'}${image.cid}';
+  }
 
   void _persistCurrentTargetFields() {
-    final selected = _selectedProviderIndex >= 0 ? _providerList[_selectedProviderIndex] : null;
+    final selected = _selectedProviderIndex >= 0
+        ? _providerList[_selectedProviderIndex]
+        : null;
     if (selected == null) {
       // No custom selected: use legacy per-enum overrides
       _endpointOverrides[_uploadTarget] = _endpointController.text;
@@ -442,7 +512,9 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
 
     final prefs = await _prefsFuture;
     // Persist selected provider: builtin:<name> or custom:<name>
-    final selected = _selectedProviderIndex >= 0 ? _providerList[_selectedProviderIndex] : null;
+    final selected = _selectedProviderIndex >= 0
+        ? _providerList[_selectedProviderIndex]
+        : null;
     if (selected != null) {
       await prefs.setString(_prefsUploadTargetKey, 'custom:${selected.name}');
     } else {
@@ -566,7 +638,10 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
 
   Future<void> _persistCustomProviders() async {
     final prefs = await _prefsFuture;
-    final customs = _providerList.where((p) => !p.isBuiltin).map((p) => p.toJson()).toList();
+    final customs = _providerList
+        .where((p) => !p.isBuiltin)
+        .map((p) => p.toJson())
+        .toList();
     await prefs.setString(_prefsCustomProvidersKey, jsonEncode(customs));
   }
 
@@ -579,7 +654,10 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
 
     try {
       final list = jsonDecode(raw) as List<dynamic>;
-      final customs = list.whereType<Map<String, dynamic>>().map(_ProviderEntry.fromJson).toList();
+      final customs = list
+          .whereType<Map<String, dynamic>>()
+          .map(_ProviderEntry.fromJson)
+          .toList();
       if (customs.isNotEmpty) {
         setState(() {
           _providerList.addAll(customs);
@@ -596,6 +674,7 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
   }
 
   void _loadTargetFields(RemoteUploadTarget target) {
+    _selectedPublishedGatewayBase = null;
     _endpointController.text =
         _endpointOverrides[target] ?? target.defaultUploadEndpoint;
     _gatewayController.text = _normalizeGatewayBase(
@@ -603,6 +682,7 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
     );
     _authTokenController.text = _authTokenOverrides[target] ?? '';
   }
+
   void _onSelectedProviderIndexChanged(int index) {
     _persistCurrentTargetFields();
     setState(() {
@@ -614,9 +694,14 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
   }
 
   void _applyProviderToControllers(_ProviderEntry entry) {
+    _selectedPublishedGatewayBase = null;
     if (entry.isBuiltin) {
-      _endpointController.text = _endpointOverrides[entry.target] ?? entry.target.defaultUploadEndpoint;
-      _gatewayController.text = _gatewayOverrides[entry.target] ?? _normalizeGatewayBase(entry.target.defaultGatewayBase);
+      _endpointController.text =
+          _endpointOverrides[entry.target] ??
+          entry.target.defaultUploadEndpoint;
+      _gatewayController.text =
+          _gatewayOverrides[entry.target] ??
+          _normalizeGatewayBase(entry.target.defaultGatewayBase);
       _authTokenController.text = _authTokenOverrides[entry.target] ?? '';
     } else {
       _endpointController.text = entry.endpoint;
@@ -640,8 +725,11 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
           if (_providerList.isEmpty) {
             _selectedProviderIndex = -1;
             _uploadTarget = RemoteUploadTarget.pinata;
+            _selectedPublishedGatewayBase = null;
             _endpointController.text = _uploadTarget.defaultUploadEndpoint;
-            _gatewayController.text = _normalizeGatewayBase(_uploadTarget.defaultGatewayBase);
+            _gatewayController.text = _normalizeGatewayBase(
+              _uploadTarget.defaultGatewayBase,
+            );
             _authTokenController.text = '';
           } else {
             _selectedProviderIndex = 0;
@@ -670,125 +758,164 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
     }
   }
 
-
-
-  Future<dynamic> _showProviderEditorDialog(BuildContext ctx, { _ProviderEntry? existing, RemoteUploadTarget? initialTarget, }) {
+  Future<dynamic> _showProviderEditorDialog(
+    BuildContext ctx, {
+    _ProviderEntry? existing,
+    RemoteUploadTarget? initialTarget,
+  }) {
     final nameCtrl = TextEditingController(text: existing?.name ?? '');
-    RemoteUploadTarget selectedTarget = existing?.target ?? initialTarget ?? RemoteUploadTarget.pinata;
+    RemoteUploadTarget selectedTarget =
+        existing?.target ?? initialTarget ?? RemoteUploadTarget.pinata;
     final endpointCtrl = TextEditingController(text: existing?.endpoint ?? '');
-    final gatewayCtrl = TextEditingController(text: existing?.gatewayBase ?? '');
+    final gatewayCtrl = TextEditingController(
+      text: existing?.gatewayBase ?? '',
+    );
     final authCtrl = TextEditingController(text: existing?.authToken ?? '');
 
     // Prefill defaults when adding a new provider
     if (existing == null) {
       nameCtrl.text = selectedTarget.label;
       endpointCtrl.text = selectedTarget.defaultUploadEndpoint;
-      gatewayCtrl.text = _normalizeGatewayBase(selectedTarget.defaultGatewayBase);
+      gatewayCtrl.text = _normalizeGatewayBase(
+        selectedTarget.defaultGatewayBase,
+      );
       authCtrl.text = '';
     }
 
     return showDialog<dynamic>(
       context: ctx,
       builder: (context) {
-        return StatefulBuilder(builder: (context, setState) {
-          var previousDefaultEndpoint = selectedTarget.defaultUploadEndpoint;
-          var previousDefaultGateway = _normalizeGatewayBase(selectedTarget.defaultGatewayBase);
-          var previousDefaultName = selectedTarget.label;
+        return StatefulBuilder(
+          builder: (context, setState) {
+            var previousDefaultEndpoint = selectedTarget.defaultUploadEndpoint;
+            var previousDefaultGateway = _normalizeGatewayBase(
+              selectedTarget.defaultGatewayBase,
+            );
+            var previousDefaultName = selectedTarget.label;
 
-          return AlertDialog(
-            title: Text(existing == null ? 'Add provider' : 'Edit provider'),
-            content: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextField(
-                    controller: nameCtrl,
-                    decoration: const InputDecoration(labelText: 'Name'),
-                  ),
-                  const SizedBox(height: 8),
-                  DropdownButtonFormField<RemoteUploadTarget>(
-                    initialValue: selectedTarget,
-                    isExpanded: true,
-                    decoration: const InputDecoration(labelText: 'Provider type'),
-                    items: RemoteUploadTarget.values
-                        .map((t) => DropdownMenuItem(value: t, child: Text(t.label)))
-                        .toList(),
-                    onChanged: (t) {
-                      if (t == null) return;
-                      final newDefaultEndpoint = t.defaultUploadEndpoint;
-                      final newDefaultGateway = _normalizeGatewayBase(t.defaultGatewayBase);
+            return AlertDialog(
+              title: Text(existing == null ? 'Add provider' : 'Edit provider'),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      controller: nameCtrl,
+                      decoration: const InputDecoration(labelText: 'Name'),
+                    ),
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<RemoteUploadTarget>(
+                      initialValue: selectedTarget,
+                      isExpanded: true,
+                      decoration: const InputDecoration(
+                        labelText: 'Provider type',
+                      ),
+                      items: RemoteUploadTarget.values
+                          .map(
+                            (t) => DropdownMenuItem(
+                              value: t,
+                              child: Text(t.label),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (t) {
+                        if (t == null) return;
+                        final newDefaultEndpoint = t.defaultUploadEndpoint;
+                        final newDefaultGateway = _normalizeGatewayBase(
+                          t.defaultGatewayBase,
+                        );
 
-                      // Update fields when adding or when current values equal previous defaults or are empty
-                      if (existing == null || endpointCtrl.text.trim().isEmpty || endpointCtrl.text.trim() == previousDefaultEndpoint) {
-                        endpointCtrl.text = newDefaultEndpoint;
-                      }
-                      if (existing == null || gatewayCtrl.text.trim().isEmpty || gatewayCtrl.text.trim() == previousDefaultGateway) {
-                        gatewayCtrl.text = newDefaultGateway;
-                      }
-                      // If the name is still the previous default (or was left blank/empty for new entries), update it too
-                      final newDefaultName = t.label;
-                      final currentName = nameCtrl.text.trim();
-                      if (existing == null || currentName.isEmpty || currentName == previousDefaultName || currentName == '$previousDefaultName (custom)') {
-                        nameCtrl.text = newDefaultName;
-                      }
+                        // Update fields when adding or when current values equal previous defaults or are empty
+                        if (existing == null ||
+                            endpointCtrl.text.trim().isEmpty ||
+                            endpointCtrl.text.trim() ==
+                                previousDefaultEndpoint) {
+                          endpointCtrl.text = newDefaultEndpoint;
+                        }
+                        if (existing == null ||
+                            gatewayCtrl.text.trim().isEmpty ||
+                            gatewayCtrl.text.trim() == previousDefaultGateway) {
+                          gatewayCtrl.text = newDefaultGateway;
+                        }
+                        // If the name is still the previous default (or was left blank/empty for new entries), update it too
+                        final newDefaultName = t.label;
+                        final currentName = nameCtrl.text.trim();
+                        if (existing == null ||
+                            currentName.isEmpty ||
+                            currentName == previousDefaultName ||
+                            currentName == '$previousDefaultName (custom)') {
+                          nameCtrl.text = newDefaultName;
+                        }
 
-                      selectedTarget = t;
-                      previousDefaultEndpoint = newDefaultEndpoint;
-                      previousDefaultGateway = newDefaultGateway;
-                      previousDefaultName = newDefaultName;
-                      setState(() {});
-                    },
-                  ),
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: endpointCtrl,
-                    decoration: const InputDecoration(labelText: 'Upload endpoint'),
-                  ),
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: gatewayCtrl,
-                    decoration: const InputDecoration(labelText: 'Gateway base'),
-                  ),
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: authCtrl,
-                    decoration: const InputDecoration(labelText: 'Auth token (optional)'),
-                  ),
-                ],
-              ),
-            ),
-            actions: [
-              if (existing != null && !existing.isBuiltin)
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop('deleted'),
-                  child: const Text('Delete', style: TextStyle(color: Colors.red)),
+                        selectedTarget = t;
+                        previousDefaultEndpoint = newDefaultEndpoint;
+                        previousDefaultGateway = newDefaultGateway;
+                        previousDefaultName = newDefaultName;
+                        setState(() {});
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: endpointCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Upload endpoint',
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: gatewayCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Gateway base',
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: authCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Auth token (optional)',
+                      ),
+                    ),
+                  ],
                 ),
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: const Text('Cancel'),
               ),
-              FilledButton(
-                onPressed: () {
-                  final entry = _ProviderEntry(
-                    name: nameCtrl.text.trim().isEmpty ? '${selectedTarget.label} (custom)' : nameCtrl.text.trim(),
-                    target: selectedTarget,
-                    endpoint: endpointCtrl.text.trim(),
-                    gatewayBase: _normalizeGatewayBase(gatewayCtrl.text.trim()),
-                    authToken: authCtrl.text.trim(),
-                    isBuiltin: false,
-                  );
-                  Navigator.of(context).pop(entry);
-                },
-                child: const Text('Save'),
-              ),
-            ],
-          );
-        });
+              actions: [
+                if (existing != null && !existing.isBuiltin)
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop('deleted'),
+                    child: const Text(
+                      'Delete',
+                      style: TextStyle(color: Colors.red),
+                    ),
+                  ),
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    final entry = _ProviderEntry(
+                      name: nameCtrl.text.trim().isEmpty
+                          ? '${selectedTarget.label} (custom)'
+                          : nameCtrl.text.trim(),
+                      target: selectedTarget,
+                      endpoint: endpointCtrl.text.trim(),
+                      gatewayBase: _normalizeGatewayBase(
+                        gatewayCtrl.text.trim(),
+                      ),
+                      authToken: authCtrl.text.trim(),
+                      isBuiltin: false,
+                    );
+                    Navigator.of(context).pop(entry);
+                  },
+                  child: const Text('Save'),
+                ),
+              ],
+            );
+          },
+        );
       },
     );
   }
-
-  
 
   // _uploadDescription removed (unused)
 
@@ -839,7 +966,9 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
                               children: [
                                 Expanded(
                                   child: DropdownButtonFormField<int>(
-                                    initialValue: _selectedProviderIndex >= 0 ? _selectedProviderIndex : null,
+                                    initialValue: _selectedProviderIndex >= 0
+                                        ? _selectedProviderIndex
+                                        : null,
                                     isExpanded: true,
                                     decoration: InputDecoration(
                                       labelText: 'Upload path',
@@ -857,7 +986,9 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
                                           ),
                                         )
                                         .toList(),
-                                    hint: const Text('No custom providers configured'),
+                                    hint: const Text(
+                                      'No custom providers configured',
+                                    ),
                                     onChanged: (idx) {
                                       if (idx != null) {
                                         _onSelectedProviderIndexChanged(idx);
@@ -868,18 +999,27 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
                                 const SizedBox(width: 8),
                                 IconButton(
                                   tooltip: 'Edit provider',
-                                  onPressed: _selectedProviderIndex >= 0 ? _onEditProviderPressed : null,
+                                  onPressed: _selectedProviderIndex >= 0
+                                      ? _onEditProviderPressed
+                                      : null,
                                   icon: const Icon(Icons.edit_outlined),
                                 ),
                                 IconButton(
                                   tooltip: 'Add provider',
                                   onPressed: () {
-                                    final initial = _selectedProviderIndex >= 0 ? _providerList[_selectedProviderIndex].target : _uploadTarget;
-                                    _showProviderEditorDialog(context, initialTarget: initial).then((result) {
+                                    final initial = _selectedProviderIndex >= 0
+                                        ? _providerList[_selectedProviderIndex]
+                                              .target
+                                        : _uploadTarget;
+                                    _showProviderEditorDialog(
+                                      context,
+                                      initialTarget: initial,
+                                    ).then((result) {
                                       if (result is _ProviderEntry) {
                                         setState(() {
                                           _providerList.add(result);
-                                          _selectedProviderIndex = _providerList.length - 1;
+                                          _selectedProviderIndex =
+                                              _providerList.length - 1;
                                           _uploadTarget = result.target;
                                           _applyProviderToControllers(result);
                                         });
@@ -924,9 +1064,65 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
                                 value: publishedImage.uploadEndpoint,
                               ),
                               const SizedBox(height: 8),
-                              _MetaRow(
-                                label: 'Gateway URL',
-                                value: publishedImage.gatewayUrl,
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Builder(
+                                    builder: (context) {
+                                      final options = _gatewayOptions(
+                                        includeConfiguredGateway:
+                                            _uploadTarget ==
+                                            RemoteUploadTarget.kubo,
+                                      );
+                                      final selectedGateway =
+                                          _selectedPublishedGatewayBase ??
+                                          _defaultPublishedGatewayBase();
+                                      final currentValue = options.any(
+                                        (option) =>
+                                            option['value'] == selectedGateway,
+                                      )
+                                          ? selectedGateway
+                                          : options.first['value']!;
+
+                                      return DropdownButtonFormField<String>(
+                                        initialValue: currentValue,
+                                        isExpanded: true,
+                                        decoration: InputDecoration(
+                                          labelText: 'Gateway URL',
+                                          border: OutlineInputBorder(
+                                            borderRadius: BorderRadius.circular(
+                                              18,
+                                            ),
+                                          ),
+                                        ),
+                                        items: options
+                                            .map(
+                                              (option) =>
+                                                  DropdownMenuItem<String>(
+                                                    value: option['value'],
+                                                    child: Text(
+                                                      option['label']!,
+                                                    ),
+                                                  ),
+                                            )
+                                            .toList(),
+                                        onChanged: (value) {
+                                          if (value != null) {
+                                            setState(() {
+                                              _selectedPublishedGatewayBase =
+                                                  value;
+                                            });
+                                          }
+                                        },
+                                      );
+                                    },
+                                  ),
+                                  const SizedBox(height: 4),
+                                  SelectableText(
+                                    _publishedGatewayUrl(publishedImage),
+                                    style: theme.textTheme.bodyLarge,
+                                  ),
+                                ],
                               ),
                               if (publishedImage.remoteUploadMessage !=
                                   null) ...[
@@ -954,15 +1150,14 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
                                   ),
                                   OutlinedButton.icon(
                                     onPressed: () => _copyText(
-                                      publishedImage.gatewayUrl,
+                                      _publishedGatewayUrl(publishedImage),
                                       'Gateway URL',
                                     ),
                                     icon: const Icon(Icons.link_rounded),
                                     label: const Text('Copy Gateway URL'),
                                   ),
                                   FilledButton.tonalIcon(
-                                    onPressed:
-                                        _openOrSharePublishedGatewayUrl,
+                                    onPressed: _openOrSharePublishedGatewayUrl,
                                     icon: Icon(
                                       _isDesktop
                                           ? Icons.open_in_browser_rounded
@@ -1022,46 +1217,50 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
                             ),
                             const SizedBox(height: 8),
                             // Download gateway selector: default gateways + configured provider gateways (non-default)
-                            StatefulBuilder(builder: (context, setState) {
-                              final options = <Map<String, String>>[];
-                              // Add public ipfs.io as an extra option
-                              options.add({'label': 'ipfs.io Public', 'value': _normalizeGatewayBase('https://ipfs.io/ipfs/')});
+                            StatefulBuilder(
+                              builder: (context, setState) {
+                                final options = _gatewayOptions();
 
-                              // Add configured provider gateways if they are non-empty and different from the default
-                              for (final p in _providerList) {
-                                final pg = p.gatewayBase.trim();
-                                if (pg.isNotEmpty && _normalizeGatewayBase(pg) != _normalizeGatewayBase(p.target.defaultGatewayBase)) {
-                                  options.add({'label': p.name, 'value': _normalizeGatewayBase(pg)});
-                                }
-                              }
+                                final currentValue =
+                                    (_selectedDownloadGateway != null &&
+                                        _selectedDownloadGateway!.isNotEmpty)
+                                    ? _normalizeGatewayBase(
+                                        _selectedDownloadGateway!,
+                                      )
+                                    : _normalizeGatewayBase(
+                                        _gatewayController.text,
+                                      );
 
-                              // Add the three/default gateways (mark as Public)
-                              options.addAll(RemoteUploadTarget.values.map((t) => {
-                                    'label': '${t.label} Public',
-                                    'value': _normalizeGatewayBase(t.defaultGatewayBase),
-                                  }));
-
-                              final currentValue = (_selectedDownloadGateway != null && _selectedDownloadGateway!.isNotEmpty)
-                                  ? _normalizeGatewayBase(_selectedDownloadGateway!)
-                                  : _normalizeGatewayBase(_gatewayController.text);
-
-                              return DropdownButtonFormField<String>(
-                                initialValue: options.any((o) => o['value'] == currentValue) ? currentValue : options.first['value'],
-                                isExpanded: true,
-                                decoration: InputDecoration(
-                                  labelText: 'Gateway to fetch from',
-                                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(18)),
-                                ),
-                                items: options
-                                    .map((o) => DropdownMenuItem<String>(value: o['value'], child: Text(o['label']!)))
-                                    .toList(),
-                                onChanged: (v) {
-                                  setState(() {
-                                    _selectedDownloadGateway = v;
-                                  });
-                                },
-                              );
-                            }),
+                                return DropdownButtonFormField<String>(
+                                  initialValue:
+                                      options.any(
+                                        (o) => o['value'] == currentValue,
+                                      )
+                                      ? currentValue
+                                      : options.first['value'],
+                                  isExpanded: true,
+                                  decoration: InputDecoration(
+                                    labelText: 'Gateway to fetch from',
+                                    border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(18),
+                                    ),
+                                  ),
+                                  items: options
+                                      .map(
+                                        (o) => DropdownMenuItem<String>(
+                                          value: o['value'],
+                                          child: Text(o['label']!),
+                                        ),
+                                      )
+                                      .toList(),
+                                  onChanged: (v) {
+                                    setState(() {
+                                      _selectedDownloadGateway = v;
+                                    });
+                                  },
+                                );
+                              },
+                            ),
                             const SizedBox(height: 12),
                             FilledButton.icon(
                               onPressed: _isDownloading ? null : _downloadImage,

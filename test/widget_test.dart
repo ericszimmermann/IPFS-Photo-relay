@@ -68,6 +68,13 @@ void main() {
           'gatewayBase': gateway,
           'authToken': '',
         },
+        {
+          'name': 'Filebase path',
+          'target': 'filebase',
+          'endpoint': 'https://rpc.filebase.io/api/v0/add',
+          'gatewayBase': 'https://ipfs.filebase.io/ipfs/',
+          'authToken': 'test-token',
+        },
       ]),
       'relay.uploadTarget': 'custom:LY tailscale',
     });
@@ -90,48 +97,79 @@ void main() {
     expect(service.uploadConfig?.resolvedEndpoint, endpoint);
     expect(service.uploadConfig?.resolvedGatewayBase, gateway);
     expect(find.text('${gateway}bafy-custom-gateway-test'), findsOneWidget);
+    expect(find.text('LY tailscale'), findsNWidgets(2));
+
+    final uploadPathDropdown = find.byType(DropdownButtonFormField<int>);
+    await tester.ensureVisible(uploadPathDropdown);
+    await tester.tap(uploadPathDropdown);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Filebase path'));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('https://ipfs.filebase.io/ipfs/bafy-custom-gateway-test'),
+      findsOneWidget,
+    );
   });
 
-  testWidgets('opens gateway URLs in the browser on desktop', (
-    WidgetTester tester,
-  ) async {
-    SharedPreferences.setMockInitialValues({});
+  testWidgets(
+    'opens gateway URLs in the browser on desktop',
+    (WidgetTester tester) async {
+      SharedPreferences.setMockInitialValues({});
 
-    final service = _CapturingTransferService();
-    await tester.pumpWidget(
-      MaterialApp(
-        home: IpfsPhotoRelayPage(startNodeOnLoad: false, service: service),
-      ),
-    );
-    await tester.pumpAndSettle();
+      final service = _CapturingTransferService();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: IpfsPhotoRelayPage(startNodeOnLoad: false, service: service),
+        ),
+      );
+      await tester.pumpAndSettle();
 
-    final uploadButton = find.text('Select File');
-    await tester.ensureVisible(uploadButton);
-    await tester.pumpAndSettle();
-    await tester.tap(uploadButton);
-    await tester.pumpAndSettle();
+      final uploadButton = find.text('Select File');
+      await tester.ensureVisible(uploadButton);
+      await tester.pumpAndSettle();
+      await tester.tap(uploadButton);
+      await tester.pumpAndSettle();
 
-    final openButton = find.text('Open Gateway URL');
-    await tester.ensureVisible(openButton);
-    await tester.pumpAndSettle();
-    await tester.tap(openButton);
-    await tester.pumpAndSettle();
+      final openButton = find.text('Open Gateway URL');
+      await tester.ensureVisible(openButton);
+      await tester.pumpAndSettle();
+      expect(
+        find.text('https://gateway.pinata.cloud/ipfs/bafy-custom-gateway-test'),
+        findsOneWidget,
+      );
+      final publishGatewayDropdown =
+          find.byType(DropdownButtonFormField<String>).first;
+      await tester.ensureVisible(publishGatewayDropdown);
+      await tester.tap(publishGatewayDropdown);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Filebase Public').last);
+      await tester.pumpAndSettle();
+      expect(
+        find.text(
+          'https://ipfs.filebase.io/ipfs/bafy-custom-gateway-test',
+        ),
+        findsOneWidget,
+      );
+      await tester.tap(openButton);
+      await tester.pumpAndSettle();
 
-    expect(
-      service.openedGatewayUrl,
-      'https://gateway.pinata.cloud/ipfs/bafy-custom-gateway-test',
-    );
-    expect(service.sharedGatewayUrl, isNull);
-  },
-      variant: const TargetPlatformVariant({
-        TargetPlatform.linux,
-        TargetPlatform.windows,
-      }));
+      expect(
+        service.openedGatewayUrl,
+        'https://ipfs.filebase.io/ipfs/bafy-custom-gateway-test',
+      );
+      expect(service.sharedGatewayUrl, isNull);
+    },
+    variant: const TargetPlatformVariant({
+      TargetPlatform.linux,
+      TargetPlatform.windows,
+    }),
+  );
 
   test('uses the supported remote targets only', () {
-    expect(
-      RemoteUploadTarget.values.map((target) => target.name),
-      ['pinata', 'filebase', 'kubo'],
-    );
+    expect(RemoteUploadTarget.values.map((target) => target.name), [
+      'pinata',
+      'filebase',
+      'kubo',
+    ]);
   });
 }

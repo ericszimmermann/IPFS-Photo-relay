@@ -957,7 +957,7 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
                         eyebrow: 'Send',
                         title: 'Upload a file and share the CID',
                         description:
-                            'Publishing uploads the file to the configured remote backend and returns the shareable CID. This is the path to use when you do not want the app to run a local IPFS node.',
+                            'Publishing uploads the file to the configured remote backend and returns the shareable CID.',
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [

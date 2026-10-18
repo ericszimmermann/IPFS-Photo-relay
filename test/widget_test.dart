@@ -54,6 +54,85 @@ void main() {
     expect(find.text('Download From CID'), findsOneWidget);
   });
 
+  testWidgets('shows and restores successful uploads in History', (
+    WidgetTester tester,
+  ) async {
+    const providerName = 'History provider';
+    const gateway = 'https://history.example/ipfs/';
+    SharedPreferences.setMockInitialValues({
+      'relay.customProviders': jsonEncode([
+        {
+          'name': providerName,
+          'target': 'kubo',
+          'endpoint': 'https://history.example/api/v0/add',
+          'gatewayBase': gateway,
+          'authToken': '',
+        },
+      ]),
+      'relay.uploadTarget': 'custom:$providerName',
+    });
+
+    final service = _CapturingTransferService();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: IpfsPhotoRelayPage(startNodeOnLoad: false, service: service),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final uploadButton = find.text('Select File');
+    await tester.ensureVisible(uploadButton);
+    await tester.tap(uploadButton);
+    await tester.pumpAndSettle();
+
+    final historyButton = find.text('History');
+    await tester.ensureVisible(historyButton);
+    await tester.tap(historyButton);
+    await tester.pumpAndSettle();
+
+    expect(find.text('photo.jpg'), findsOneWidget);
+    expect(find.text('bafy-custom-gateway-test'), findsOneWidget);
+    expect(find.textContaining('$providerName | '), findsOneWidget);
+
+    await tester.tap(find.text('photo.jpg'));
+    await tester.pumpAndSettle();
+
+    expect(find.text(providerName), findsWidgets);
+    expect(find.text('${gateway}bafy-custom-gateway-test'), findsOneWidget);
+    final publishGatewayDropdown = find
+        .byType(DropdownButtonFormField<String>)
+        .first;
+    await tester.ensureVisible(publishGatewayDropdown);
+    await tester.tap(publishGatewayDropdown);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Filebase Public').last);
+    await tester.pumpAndSettle();
+    expect(
+      find.text('https://ipfs.filebase.io/ipfs/bafy-custom-gateway-test'),
+      findsOneWidget,
+    );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: IpfsPhotoRelayPage(
+          startNodeOnLoad: false,
+          service: _CapturingTransferService(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final restoredHistoryButton = find.text('History');
+    await tester.ensureVisible(restoredHistoryButton);
+    await tester.tap(restoredHistoryButton);
+    await tester.pumpAndSettle();
+
+    expect(find.text('photo.jpg'), findsOneWidget);
+    expect(find.text('bafy-custom-gateway-test'), findsOneWidget);
+  });
+
   testWidgets('restores the selected custom Kubo provider', (
     WidgetTester tester,
   ) async {
@@ -137,17 +216,16 @@ void main() {
         find.text('https://gateway.pinata.cloud/ipfs/bafy-custom-gateway-test'),
         findsOneWidget,
       );
-      final publishGatewayDropdown =
-          find.byType(DropdownButtonFormField<String>).first;
+      final publishGatewayDropdown = find
+          .byType(DropdownButtonFormField<String>)
+          .first;
       await tester.ensureVisible(publishGatewayDropdown);
       await tester.tap(publishGatewayDropdown);
       await tester.pumpAndSettle();
       await tester.tap(find.text('Filebase Public').last);
       await tester.pumpAndSettle();
       expect(
-        find.text(
-          'https://ipfs.filebase.io/ipfs/bafy-custom-gateway-test',
-        ),
+        find.text('https://ipfs.filebase.io/ipfs/bafy-custom-gateway-test'),
         findsOneWidget,
       );
       await tester.tap(openButton);

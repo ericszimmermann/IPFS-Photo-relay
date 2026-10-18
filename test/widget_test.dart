@@ -54,6 +54,38 @@ void main() {
     expect(find.text('Download From CID'), findsOneWidget);
   });
 
+  testWidgets('toggles and restores the selected theme', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    await tester.pumpWidget(const IpfsPhotoRelayApp(startNodeOnLoad: false));
+    await tester.pumpAndSettle();
+
+    expect(
+      Theme.of(tester.element(find.text('IPFS Photo Relay'))).brightness,
+      Brightness.light,
+    );
+    await tester.tap(find.byTooltip('Switch to dark theme'));
+    await tester.pumpAndSettle();
+
+    expect(
+      Theme.of(tester.element(find.text('IPFS Photo Relay'))).brightness,
+      Brightness.dark,
+    );
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getBool('relay.darkTheme'), isTrue);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(const IpfsPhotoRelayApp(startNodeOnLoad: false));
+    await tester.pumpAndSettle();
+
+    expect(
+      Theme.of(tester.element(find.text('IPFS Photo Relay'))).brightness,
+      Brightness.dark,
+    );
+  });
+
   testWidgets('shows and restores successful uploads in History', (
     WidgetTester tester,
   ) async {

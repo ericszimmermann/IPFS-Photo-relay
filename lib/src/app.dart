@@ -108,57 +108,107 @@ class _ProviderEntry {
   }
 }
 
-class IpfsPhotoRelayApp extends StatelessWidget {
+class IpfsPhotoRelayApp extends StatefulWidget {
   const IpfsPhotoRelayApp({super.key, this.startNodeOnLoad = true});
 
   final bool startNodeOnLoad;
 
   @override
-  Widget build(BuildContext context) {
-    const canvas = Color(0xFFF5F1E8);
-    const ink = Color(0xFF153243);
-    const accent = Color(0xFF1F7A8C);
+  State<IpfsPhotoRelayApp> createState() => _IpfsPhotoRelayAppState();
+}
+
+class _IpfsPhotoRelayAppState extends State<IpfsPhotoRelayApp> {
+  static const String _prefsDarkThemeKey = 'relay.darkTheme';
+  bool _isDarkTheme = false;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_restoreTheme());
+  }
+
+  Future<void> _restoreTheme() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final isDarkTheme = prefs.getBool(_prefsDarkThemeKey) ?? false;
+      if (mounted) {
+        setState(() => _isDarkTheme = isDarkTheme);
+      }
+    } catch (_) {
+      // Keep the default light theme if local preferences are unavailable.
+    }
+  }
+
+  Future<void> _toggleTheme() async {
+    final isDarkTheme = !_isDarkTheme;
+    setState(() => _isDarkTheme = isDarkTheme);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_prefsDarkThemeKey, isDarkTheme);
+    } catch (_) {
+      // Keep the selected theme for this session if it cannot be saved.
+    }
+  }
+
+  ThemeData _buildTheme(Brightness brightness) {
+    final isDarkTheme = brightness == Brightness.dark;
+    final canvas = isDarkTheme
+        ? const Color(0xFF111B1E)
+        : const Color(0xFFF5F1E8);
+    final ink = isDarkTheme ? const Color(0xFFE6F1EF) : const Color(0xFF153243);
+    final accent = isDarkTheme
+      ? const Color(0xFF8AB4D8)
+        : const Color(0xFF1F7A8C);
     const highlight = Color(0xFFF4B942);
+    final cardColor = isDarkTheme ? const Color(0xFF1A292D) : Colors.white;
 
     final scheme =
         ColorScheme.fromSeed(
           seedColor: accent,
-          brightness: Brightness.light,
+          brightness: brightness,
         ).copyWith(
           primary: accent,
           secondary: highlight,
-          surface: Colors.white,
+          surface: cardColor,
           onPrimary: Colors.white,
           onSurface: ink,
         );
 
+    return ThemeData(
+      colorScheme: scheme,
+      scaffoldBackgroundColor: canvas,
+      useMaterial3: true,
+      textTheme: (isDarkTheme ? ThemeData.dark() : ThemeData.light()).textTheme
+          .apply(bodyColor: ink, displayColor: ink),
+      appBarTheme: AppBarTheme(
+        backgroundColor: Colors.transparent,
+        foregroundColor: ink,
+        elevation: 0,
+        centerTitle: false,
+      ),
+      cardTheme: CardThemeData(
+        color: cardColor.withValues(alpha: 0.92),
+        elevation: 0,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(24),
+          side: BorderSide(color: ink.withValues(alpha: 0.08)),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return MaterialApp(
       title: 'IPFS Photo Relay',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: scheme,
-        scaffoldBackgroundColor: canvas,
-        useMaterial3: true,
-        textTheme: ThemeData.light().textTheme.apply(
-          bodyColor: ink,
-          displayColor: ink,
-        ),
-        appBarTheme: const AppBarTheme(
-          backgroundColor: Colors.transparent,
-          foregroundColor: ink,
-          elevation: 0,
-          centerTitle: false,
-        ),
-        cardTheme: CardThemeData(
-          color: Colors.white.withValues(alpha: 0.92),
-          elevation: 0,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(24),
-            side: BorderSide(color: ink.withValues(alpha: 0.08)),
-          ),
-        ),
+      themeMode: _isDarkTheme ? ThemeMode.dark : ThemeMode.light,
+      theme: _buildTheme(Brightness.light),
+      darkTheme: _buildTheme(Brightness.dark),
+      home: IpfsPhotoRelayPage(
+        startNodeOnLoad: widget.startNodeOnLoad,
+        onThemeToggle: _toggleTheme,
       ),
-      home: IpfsPhotoRelayPage(startNodeOnLoad: startNodeOnLoad),
     );
   }
 }
@@ -168,10 +218,12 @@ class IpfsPhotoRelayPage extends StatefulWidget {
     super.key,
     required this.startNodeOnLoad,
     this.service,
+    this.onThemeToggle,
   });
 
   final bool startNodeOnLoad;
   final IpfsTransferService? service;
+  final VoidCallback? onThemeToggle;
 
   @override
   State<IpfsPhotoRelayPage> createState() => _IpfsPhotoRelayPageState();
@@ -1146,14 +1198,28 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
     final publishedImage = _publishedImage;
     final downloadedImage = _downloadedImage;
 
+    final isDarkTheme = theme.brightness == Brightness.dark;
     return Scaffold(
-      appBar: AppBar(title: const Text('IPFS Photo Relay')),
+      appBar: AppBar(
+        title: const Text('IPFS Photo Relay'),
+        actions: [
+          IconButton(
+            tooltip: isDarkTheme
+                ? 'Switch to light theme'
+                : 'Switch to dark theme',
+            onPressed: widget.onThemeToggle,
+            icon: Icon(isDarkTheme ? Icons.light_mode : Icons.dark_mode),
+          ),
+        ],
+      ),
       body: DecoratedBox(
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            colors: [Color(0xFFFFF7E2), Color(0xFFE8F1F2)],
+            colors: isDarkTheme
+                ? const [Color(0xFF172428), Color(0xFF10191C)]
+                : const [Color(0xFFFFF7E2), Color(0xFFE8F1F2)],
           ),
         ),
         child: SafeArea(
@@ -1595,14 +1661,17 @@ class _UploadHistoryPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final isDarkTheme = theme.brightness == Brightness.dark;
     return Scaffold(
       appBar: AppBar(title: const Text('History')),
       body: DecoratedBox(
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            colors: [Color(0xFFFFF7E2), Color(0xFFE8F1F2)],
+            colors: isDarkTheme
+                ? const [Color(0xFF172428), Color(0xFF10191C)]
+                : const [Color(0xFFFFF7E2), Color(0xFFE8F1F2)],
           ),
         ),
         child: SafeArea(
@@ -1624,7 +1693,7 @@ class _UploadHistoryPage extends StatelessWidget {
                       itemBuilder: (context, index) {
                         final entry = entries[index];
                         return Material(
-                          color: Colors.white,
+                          color: theme.colorScheme.surface,
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(8),
                             side: BorderSide(

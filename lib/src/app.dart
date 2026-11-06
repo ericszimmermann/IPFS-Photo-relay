@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb;
 import 'package:flutter/material.dart';
@@ -9,60 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'ipfs/ipfs_transfer_service.dart';
 import 'ipfs/remote_upload_client.dart';
-
-class _UploadHistoryEntry {
-  const _UploadHistoryEntry({
-    required this.fileName,
-    required this.cid,
-    required this.provider,
-    required this.targetName,
-    required this.mimeType,
-    required this.uploadedAt,
-    required this.isImage,
-    required this.isCustomProvider,
-    this.thumbnailBase64,
-  });
-
-  final String fileName;
-  final String cid;
-  final String provider;
-  final String targetName;
-  final String mimeType;
-  final DateTime uploadedAt;
-  final bool isImage;
-  final bool isCustomProvider;
-  final String? thumbnailBase64;
-
-  Map<String, dynamic> toJson() => {
-    'fileName': fileName,
-    'cid': cid,
-    'provider': provider,
-    'target': targetName,
-    'mimeType': mimeType,
-    'uploadedAt': uploadedAt.toIso8601String(),
-    'isImage': isImage,
-    'isCustomProvider': isCustomProvider,
-    'thumbnail': thumbnailBase64,
-  };
-
-  static _UploadHistoryEntry? fromJson(Map<String, dynamic> json) {
-    final uploadedAt = DateTime.tryParse(json['uploadedAt'] as String? ?? '');
-    if (uploadedAt == null) {
-      return null;
-    }
-    return _UploadHistoryEntry(
-      fileName: json['fileName'] as String? ?? 'Unknown file',
-      cid: json['cid'] as String? ?? '',
-      provider: json['provider'] as String? ?? 'Unknown provider',
-      targetName: json['target'] as String? ?? RemoteUploadTarget.pinata.name,
-      mimeType: json['mimeType'] as String? ?? 'application/octet-stream',
-      uploadedAt: uploadedAt,
-      isImage: json['isImage'] as bool? ?? false,
-      isCustomProvider: json['isCustomProvider'] as bool? ?? false,
-      thumbnailBase64: json['thumbnail'] as String?,
-    );
-  }
-}
+import 'history.dart';
 
 // Represents a provider entry (builtin or user-defined).
 class _ProviderEntry {
@@ -157,7 +103,7 @@ class _IpfsPhotoRelayAppState extends State<IpfsPhotoRelayApp> {
         : const Color(0xFFF5F1E8);
     final ink = isDarkTheme ? const Color(0xFFE6F1EF) : const Color(0xFF153243);
     final accent = isDarkTheme
-      ? const Color(0xFF8AB4D8)
+        ? const Color(0xFF8AB4D8)
         : const Color(0xFF1F7A8C);
     const highlight = Color(0xFFF4B942);
     final cardColor = isDarkTheme ? const Color(0xFF1A292D) : Colors.white;
@@ -230,7 +176,6 @@ class IpfsPhotoRelayPage extends StatefulWidget {
 }
 
 class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
-  static const String _prefsUploadHistoryKey = 'relay.uploadHistory';
   static const String _prefsCustomProvidersKey = 'relay.customProviders';
   static const String _prefsUploadTargetKey = 'relay.uploadTarget';
   static const String _prefsEndpointPrefix = 'relay.endpoint.';
@@ -241,6 +186,7 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
       widget.service ?? IpfsTransferService();
   late final Future<SharedPreferences> _prefsFuture =
       SharedPreferences.getInstance();
+  late final HistoryStore _history = HistoryStore(prefsFuture: _prefsFuture);
   final TextEditingController _cidController = TextEditingController();
   final TextEditingController _endpointController = TextEditingController();
   final TextEditingController _gatewayController = TextEditingController();
@@ -249,8 +195,6 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
   final Map<RemoteUploadTarget, String> _endpointOverrides = {};
   final Map<RemoteUploadTarget, String> _gatewayOverrides = {};
   final Map<RemoteUploadTarget, String> _authTokenOverrides = {};
-  final List<_UploadHistoryEntry> _uploadHistory = [];
-
   // Provider list: only user-defined (custom) entries.
   late List<_ProviderEntry> _providerList;
   // -1 means no custom provider selected (use builtin/legacy selection)
@@ -283,7 +227,7 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
     _loadTargetFields(_uploadTarget);
     _selectedDownloadGateway = _gatewayController.text;
     unawaited(_restoreSettings());
-    unawaited(_restoreUploadHistory());
+    unawaited(_history.restore());
   }
 
   @override
@@ -323,9 +267,9 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
         return;
       }
 
-      await _recordSuccessfulUpload(
-        publishedImage,
-        providerName,
+      await _history.recordUpload(
+        image: publishedImage,
+        provider: providerName,
         isCustomProvider: isCustomProvider,
       );
       if (!mounted) {
@@ -357,105 +301,51 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
     }
   }
 
-  Future<void> _recordSuccessfulUpload(
-    PublishedImage image,
-    String provider, {
-    required bool isCustomProvider,
-  }) async {
-    final thumbnail = image.isImage
-        ? await _createThumbnail(image.bytes)
-        : null;
-    final entry = _UploadHistoryEntry(
-      fileName: image.fileName,
-      cid: image.cid,
-      provider: provider,
-      targetName: image.remoteTarget.name,
-      mimeType: image.mimeType,
-      uploadedAt: DateTime.now(),
-      isImage: image.isImage,
-      isCustomProvider: isCustomProvider,
-      thumbnailBase64: thumbnail == null ? null : base64Encode(thumbnail),
-    );
-
-    setState(() {
-      _uploadHistory.insert(0, entry);
-      if (_uploadHistory.length > 30) {
-        _uploadHistory.removeRange(30, _uploadHistory.length);
+  ({String name, RemoteUploadTarget target, bool isCustom}) _downloadProvider(
+    String gatewayBase,
+  ) {
+    final normalizedGateway = _normalizeGatewayBase(gatewayBase);
+    for (final provider in _providerList) {
+      if (provider.gatewayBase.trim().isNotEmpty &&
+          _normalizeGatewayBase(provider.gatewayBase) == normalizedGateway) {
+        return (name: provider.name, target: provider.target, isCustom: true);
       }
-    });
-
-    try {
-      final prefs = await _prefsFuture;
-      await prefs.setString(
-        _prefsUploadHistoryKey,
-        jsonEncode(_uploadHistory.map((item) => item.toJson()).toList()),
-      );
-    } catch (_) {
-      // The completed upload remains usable even if local history cannot be saved.
     }
-  }
 
-  Future<Uint8List?> _createThumbnail(Uint8List bytes) async {
-    ui.Codec? codec;
-    ui.Image? image;
-    try {
-      codec = await ui.instantiateImageCodec(
-        bytes,
-        targetWidth: 96,
-        targetHeight: 96,
-      );
-      final frame = await codec.getNextFrame();
-      image = frame.image;
-      final thumbnail = await image.toByteData(format: ui.ImageByteFormat.png);
-      return thumbnail?.buffer.asUint8List();
-    } catch (_) {
-      return null;
-    } finally {
-      image?.dispose();
-      codec?.dispose();
-    }
-  }
-
-  Future<void> _restoreUploadHistory() async {
-    try {
-      final prefs = await _prefsFuture;
-      final raw = prefs.getString(_prefsUploadHistoryKey);
-      if (raw == null || raw.isEmpty) {
-        return;
+    for (final target in RemoteUploadTarget.values) {
+      if (_normalizeGatewayBase(target.defaultGatewayBase) ==
+          normalizedGateway) {
+        return (name: target.label, target: target, isCustom: false);
       }
-      final decoded = jsonDecode(raw) as List<dynamic>;
-      final entries = decoded
-          .whereType<Map<String, dynamic>>()
-          .map(_UploadHistoryEntry.fromJson)
-          .whereType<_UploadHistoryEntry>()
-          .take(30)
-          .toList();
-      if (mounted) {
-        setState(() {
-          _uploadHistory
-            ..clear()
-            ..addAll(entries);
-        });
-      }
-    } catch (_) {
-      // Ignore malformed or unavailable local history.
     }
+
+    return (name: _uploadTarget.label, target: _uploadTarget, isCustom: false);
   }
 
   Future<void> _openUploadHistory() async {
-    final entry = await Navigator.of(context).push<_UploadHistoryEntry>(
-      MaterialPageRoute<_UploadHistoryEntry>(
-        builder: (context) => _UploadHistoryPage(entries: _uploadHistory),
+    final result = await Navigator.of(context).push<HistoryPageResult>(
+      MaterialPageRoute<HistoryPageResult>(
+        builder: (context) => HistoryPage(entries: _history.entries),
       ),
     );
-    if (entry == null || !mounted) {
+    if (result == null || !mounted) {
       return;
     }
 
-    _loadHistoryEntry(entry);
+    if (result.deletedEntries.isNotEmpty) {
+      await _history.removeEntries(result.deletedEntries);
+      if (mounted) {
+        setState(() {});
+      }
+      return;
+    }
+
+    if (result.selectedEntry != null) {
+      _loadHistoryEntry(result.selectedEntry!);
+    }
   }
 
-  void _loadHistoryEntry(_UploadHistoryEntry entry) {
+  void _loadHistoryEntry(UploadHistoryEntry entry) {
     final target = RemoteUploadTarget.values.firstWhere(
       (item) => item.name == entry.targetName,
       orElse: () => _uploadTarget,
@@ -500,6 +390,7 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
     setState(() {
       _uploadTarget = restoredTarget;
       _publishedImage = image;
+      _downloadedImage = null;
       _selectedPublishedGatewayBase = null;
       _cidController.text = image.cid;
       _statusMessage = 'Loaded ${image.fileName} from upload history.';
@@ -520,6 +411,7 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
               _selectedDownloadGateway!.trim().isNotEmpty)
           ? _selectedDownloadGateway!.trim()
           : _gatewayController.text.trim();
+      final downloadProvider = _downloadProvider(gatewayBase);
 
       // Find matching custom provider to supply auth token if available
       String authToken = '';
@@ -542,6 +434,16 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
       final downloadedImage = await _service.downloadByCid(
         rawCid: _cidController.text,
         remoteUploadConfig: cfg,
+      );
+      if (!mounted) {
+        return;
+      }
+
+      await _history.recordReceived(
+        image: downloadedImage,
+        provider: downloadProvider.name,
+        targetName: downloadProvider.target.name,
+        isCustomProvider: downloadProvider.isCustom,
       );
       if (!mounted) {
         return;
@@ -1334,12 +1236,6 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
                                     ),
                               label: const Text('Select File'),
                             ),
-                            const SizedBox(height: 8),
-                            OutlinedButton.icon(
-                              onPressed: _openUploadHistory,
-                              icon: const Icon(Icons.history_rounded),
-                              label: const Text('History'),
-                            ),
                             if (publishedImage != null) ...[
                               const SizedBox(height: 16),
                               _MetaRow(
@@ -1485,6 +1381,15 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
                         ),
                       ),
                       const SizedBox(height: 16),
+                      OutlinedButton.icon(
+                        onPressed: _openUploadHistory,
+                        icon: const Icon(Icons.history_rounded),
+                        label: const Text('History'),
+                        style: OutlinedButton.styleFrom(
+                          minimumSize: const Size.fromHeight(80),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
                       _SectionCard(
                         eyebrow: 'Receive',
                         title: 'Fetch the image through a gateway',
@@ -1622,142 +1527,6 @@ class _IpfsPhotoRelayPageState extends State<IpfsPhotoRelayPage> {
                   ),
                 ),
               ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _UploadHistoryPage extends StatelessWidget {
-  const _UploadHistoryPage({required this.entries});
-
-  final List<_UploadHistoryEntry> entries;
-
-  String _formatDateTime(DateTime dateTime) {
-    final localTime = dateTime.toLocal();
-    String twoDigits(int value) => value.toString().padLeft(2, '0');
-    return '${localTime.year}-${twoDigits(localTime.month)}-${twoDigits(localTime.day)} '
-        '${twoDigits(localTime.hour)}:${twoDigits(localTime.minute)}';
-  }
-
-  Widget _thumbnail(_UploadHistoryEntry entry) {
-    if (entry.isImage && entry.thumbnailBase64 != null) {
-      try {
-        return Image.memory(
-          base64Decode(entry.thumbnailBase64!),
-          fit: BoxFit.cover,
-          errorBuilder: (context, error, stackTrace) =>
-              const Icon(Icons.insert_drive_file_outlined),
-        );
-      } catch (_) {
-        return const Icon(Icons.insert_drive_file_outlined);
-      }
-    }
-    return const Icon(Icons.insert_drive_file_outlined);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final isDarkTheme = theme.brightness == Brightness.dark;
-    return Scaffold(
-      appBar: AppBar(title: const Text('History')),
-      body: DecoratedBox(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: isDarkTheme
-                ? const [Color(0xFF172428), Color(0xFF10191C)]
-                : const [Color(0xFFFFF7E2), Color(0xFFE8F1F2)],
-          ),
-        ),
-        child: SafeArea(
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 900),
-              child: entries.isEmpty
-                  ? Center(
-                      child: Text(
-                        'No successful uploads yet.',
-                        style: theme.textTheme.bodyLarge,
-                      ),
-                    )
-                  : ListView.separated(
-                      padding: const EdgeInsets.all(16),
-                      itemCount: entries.length,
-                      separatorBuilder: (context, index) =>
-                          const SizedBox(height: 10),
-                      itemBuilder: (context, index) {
-                        final entry = entries[index];
-                        return Material(
-                          color: theme.colorScheme.surface,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
-                            side: BorderSide(
-                              color: theme.colorScheme.onSurface.withValues(
-                                alpha: 0.12,
-                              ),
-                            ),
-                          ),
-                          clipBehavior: Clip.antiAlias,
-                          child: InkWell(
-                            onTap: () => Navigator.of(context).pop(entry),
-                            child: Padding(
-                              padding: const EdgeInsets.all(10),
-                              child: Row(
-                                children: [
-                                  ClipRRect(
-                                    borderRadius: BorderRadius.circular(6),
-                                    child: ColoredBox(
-                                      color: theme.colorScheme.surface,
-                                      child: SizedBox(
-                                        width: 64,
-                                        height: 64,
-                                        child: Center(child: _thumbnail(entry)),
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 12),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          entry.fileName,
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: theme.textTheme.bodyLarge
-                                              ?.copyWith(
-                                                fontWeight: FontWeight.w700,
-                                              ),
-                                        ),
-                                        Text(
-                                          entry.cid,
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: theme.textTheme.bodyMedium,
-                                        ),
-                                        Text(
-                                          '${entry.provider} | ${_formatDateTime(entry.uploadedAt)}',
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: theme.textTheme.bodySmall,
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                  const Icon(Icons.chevron_right_rounded),
-                                ],
-                              ),
-                            ),
-                          ),
-                        );
-                      },
-                    ),
             ),
           ),
         ),
